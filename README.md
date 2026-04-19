@@ -2,7 +2,9 @@
 
 Read-only Node.js servis koji sinhronizuje BigTehn (SQL Server `QBigTehn`) → Supabase cache. Deploy: Windows Service na firma serveru gde je BigTehn SQL.
 
-**Faza 1B (trenutno):** Sinhronizuje 5 kataloga svako jutro u 06:00 — sektori, mašine, komitenti, radnici, lokacije delova. Ne menja ni jedan red u BigTehn-u.
+**Faza 1B (trenutno):** Sinhronizuje **4 kataloga** svako jutro u 06:00 — sektori, mašine, komitenti, radnici. Ne menja ni jedan red u BigTehn-u.
+
+> **Locations isključen iz Faze 1B.** `BIGTEHN_DATA_MAP.md` je pretpostavio da je `tLokacijeDelova` katalog polica (K-A1, K-S=škart…), ali je `discover:columns` 2026-04-18 pokazao da je to **transakcioni log kretanja delova** (IDRN, IDPredmet, IDPozicija, SifraRadnika, Datum, Kolicina, IDVrstaKvaliteta). Pravi katalog destinacija/kvaliteta je verovatno `tVrsteKvalitetaDelova` — ide u Fazu 2 zajedno sa transakcionim sync-om kretanja delova. `syncLocations.js` je sada disabled stub koji eksplicitno odbija da se pokrene.
 
 Pun arhitekturni opis: vidi [`BIGTEHN_DATA_MAP.md`](https://github.com/Servoteh/servoteh-plan-montaze/blob/main/docs/BIGTEHN_DATA_MAP.md) (u `servoteh-plan-montaze` repo-u).
 
@@ -16,15 +18,9 @@ Pun arhitekturni opis: vidi [`BIGTEHN_DATA_MAP.md`](https://github.com/Servoteh/
 | `machines`    | `tOperacije`     | `bigtehn_machines_cache`    | dnevno 06:00 | rj_code, name, department_id, no_procedure, … |
 | `customers`   | `Komitenti`      | `bigtehn_customers_cache`   | dnevno 06:00 | id, name, short_name, city, tax_id |
 | `workers`     | `tRadnici`       | `bigtehn_workers_cache`     | dnevno 06:00 | id, full_name, short_name, department_id, card_id, is_active **(BEZ Password kolona — vidi sekciju 6.6 BIGTEHN_DATA_MAP.md)** |
-| `locations`   | `tLokacijeDelova`| `bigtehn_locations_cache`   | dnevno 06:00 | id, code, name, department_id, is_active **(pretpostavljena shema — vidi napomenu ispod)** |
+| ~~`locations`~~ | ~~`tLokacijeDelova`~~ | — | **DISABLED** | Premešteno u Fazu 2. Vidi napomenu iznad. |
 
 Svaki run loguje u `bridge_sync_log` tabelu (i u composite `catalogs_daily` red).
-
-> **Napomena o `locations`:** `BIGTEHN_DATA_MAP.md` (sekcija 5) ne specificira tačne kolone tabele `tLokacijeDelova` — pretpostavljene su (`IDLokacije`, `SifraLokacije`, `NazivLokacije`, `IDRadneJedinice`, `Aktivan`). Ako prvi run padne sa `Invalid column name 'X'`, pokreni:
-> ```powershell
-> npm run discover:columns -- tLokacijeDelova
-> ```
-> i ažuriraj `src/jobs/syncLocations.js` (SQL na vrhu fajla) prema stvarnim imenima kolona. Locations job je u composite-u tretiran kao "best-effort" — ako padne, ostala 4 kataloga su već sinhronizovana.
 
 ---
 
@@ -35,7 +31,7 @@ Svaki run loguje u `bridge_sync_log` tabelu (i u composite `catalogs_daily` red)
 - **Node.js 20 ili 22** (`node --version`)
 - Mrežni pristup do `Vasa-SQL:5765`
 - Mrežni pristup do `*.supabase.co` (HTTPS 443)
-- **SQL Server čitalac** — preporuka: kreirati zaseban login `bridge_reader` sa SELECT pravima na: `tRadneJedinice`, `tOperacije`, `Komitenti`, `tRadnici`, `tLokacijeDelova`. Faza 1C dodaje još tabela.
+- **SQL Server čitalac** — preporuka: kreirati zaseban login `bridge_reader` sa SELECT pravima na: `tRadneJedinice`, `tOperacije`, `Komitenti`, `tRadnici`. Faza 2 dodaje `tVrsteKvalitetaDelova` + `tLokacijeDelova` (transakciono). Faza 1C dodaje `Predmeti`, `tRN`, `tStavkeRN`, `tTehPostupak`.
 - Za servis instalaciju: **PowerShell pokrenut kao Administrator**
 
 ### U Supabase-u (PRE prvog run-a Bridge servisa)
@@ -102,16 +98,10 @@ CREATE TABLE IF NOT EXISTS bigtehn_workers_cache (
   synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 6) bigtehn_locations_cache (pretpostavljena shema — vidi napomenu o discover:columns)
-CREATE TABLE IF NOT EXISTS bigtehn_locations_cache (
-  id INT PRIMARY KEY,
-  code TEXT NOT NULL,
-  name TEXT,
-  department_id TEXT REFERENCES bigtehn_departments_cache(id),
-  is_active BOOLEAN DEFAULT TRUE,
-  synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_bigtehn_locations_dept ON bigtehn_locations_cache(department_id);
+-- 6) bigtehn_locations_cache — NAMERNO IZOSTAVLJENO U FAZI 1B.
+--    Vidi NOTE u src/jobs/syncLocations.js. tLokacijeDelova nije katalog.
+--    Tabela će biti redefinisana u Fazi 2 (kao bigtehn_quality_locations_cache
+--    + bigtehn_part_movements transakciono).
 
 -- 7) RLS — Bridge koristi SERVICE_ROLE key (bypass RLS).
 --    Za read iz aplikacije, dodati read-only policy:
@@ -119,14 +109,12 @@ ALTER TABLE bigtehn_departments_cache ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bigtehn_machines_cache    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bigtehn_customers_cache   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bigtehn_workers_cache     ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bigtehn_locations_cache   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bridge_sync_log           ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "authenticated_read" ON bigtehn_departments_cache FOR SELECT TO authenticated USING (true);
 CREATE POLICY "authenticated_read" ON bigtehn_machines_cache    FOR SELECT TO authenticated USING (true);
 CREATE POLICY "authenticated_read" ON bigtehn_customers_cache   FOR SELECT TO authenticated USING (true);
 CREATE POLICY "authenticated_read" ON bigtehn_workers_cache     FOR SELECT TO authenticated USING (true);
-CREATE POLICY "authenticated_read" ON bigtehn_locations_cache   FOR SELECT TO authenticated USING (true);
 CREATE POLICY "authenticated_read" ON bridge_sync_log           FOR SELECT TO authenticated USING (true);
 ```
 
@@ -153,13 +141,13 @@ npm run sync:departments
 npm run sync:machines
 npm run sync:customers
 npm run sync:workers
-npm run sync:locations
+# napomena: `npm run sync:locations` namerno baca grešku (disabled stub)
 
-# 3) ručno pokrenuti svih 5 odjednom
+# 3) ručno pokrenuti sve 4 katalog odjednom
 npm run sync:catalogs
 
 # (debug) — otkrij stvarne kolone neke BigTehn tabele:
-npm run discover:columns -- tLokacijeDelova
+npm run discover:columns -- tVrsteKvalitetaDelova
 npm run discover:columns -- tRN
 
 # 4) idle režim sa scheduler-om (čeka 06:00)
@@ -263,12 +251,12 @@ npm run service:uninstall
 ### `[supabase] upsert ... failed: relation "bigtehn_..._cache" does not exist`
 - Supabase tabele nisu kreirane. Vidi sekciju "Preduslovi → U Supabase-u" iznad.
 
-### `RequestError: Invalid column name 'X'.` (najčešće za locations)
-- Pretpostavljena shema u `syncLocations.js` (ili drugom job-u) ne odgovara stvarnoj BigTehn tabeli. Pokreni:
+### `RequestError: Invalid column name 'X'.`
+- Pretpostavljena shema u nekom `sync*.js` fajlu ne odgovara stvarnoj BigTehn tabeli. Pokreni:
   ```powershell
-  npm run discover:columns -- tLokacijeDelova
+  npm run discover:columns -- <NazivTabele>
   ```
-- Output ti pokazuje sve kolone + sample TOP 5 redova. Ažuriraj SQL na vrhu odgovarajućeg `src/jobs/sync*.js` fajla, a po potrebi i mapiranje u `mapRow()`. Ako se poklope nazivi → ažuriraj i Supabase shemu (`bigtehn_locations_cache`).
+- Output ti pokazuje sve kolone + sample TOP 5 redova. Ažuriraj SQL na vrhu odgovarajućeg `src/jobs/sync*.js` fajla, a po potrebi i mapiranje u `mapRow()`. Ako se poklope nazivi → ažuriraj i Supabase shemu odgovarajuće cache tabele.
 
 ### `[supabase] ... permission denied`
 - Bridge koristi `SUPABASE_SERVICE_ROLE_KEY` (bypassuje RLS). Ako vidiš permission denied, koristi `SERVICE_ROLE` key, ne `ANON` key. Provera: `dashboard.supabase.com → Project Settings → API → Service role key` (NE Anon public).
@@ -300,5 +288,6 @@ npm run service:uninstall
 - **1C** — sync `Predmeti`, `tRN`, `tStavkeRN`, `tTehPostupak` (svakih 15 min, delta)
 - **1D** — overlays + upload crteža u Supabase
 - **1E** — write-back (lansiran/saglasan/tehpostupak/StatusRN)
+- **2** — kretanje delova: katalog destinacija/kvaliteta (`tVrsteKvalitetaDelova` → `bigtehn_quality_locations_cache`) + transakcioni sync `tLokacijeDelova` (`bigtehn_part_movements`, incremental po `DatumIVremeUnosa`)
 
-Plan: `BIGTEHN_DATA_MAP.md`, sekcija 8.
+Plan: `BIGTEHN_DATA_MAP.md`, sekcija 8 (uz korekciju za sekciju 5/3.1 koja je netačno opisivala `tLokacijeDelova`).

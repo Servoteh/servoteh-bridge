@@ -1,66 +1,45 @@
-import { runQuery } from '../db/sqlserver.js';
-import { upsertChunked } from '../db/supabase.js';
 import { logJob } from '../logger.js';
 import { failRun, finishRun, startRun } from './syncLog.js';
 
 const log = logJob('syncLocations');
 
 /**
- * VAŽNO — pretpostavljena shema (BIGTEHN_DATA_MAP.md sekcija 5 ne specificira
- * tačne kolone za tLokacijeDelova, samo spominje upotrebu u sekciji 3.1).
+ * STATUS: DISABLED (Faza 2)
+ * ---------------------------------------------------------------------------
+ * Originalna pretpostavka iz BIGTEHN_DATA_MAP.md (police K-A1, K-B3, K-MG,
+ * K-S=škart) bila je POGREŠNA. Stvarna shema `tLokacijeDelova` (potvrđeno
+ * preko `npm run discover:columns -- tLokacijeDelova` 2026-04-18):
  *
- * Ako prvi run padne sa "Invalid column name X" — pokreni:
- *   npm run discover:columns -- tLokacijeDelova
- * pa ažuriraj SQL ispod prema stvarnim kolonama.
+ *   IDLokacije        int       NOT NULL   -- PK
+ *   IDRN              int       NOT NULL   -- referenca na radni nalog
+ *   IDPredmet         int       NOT NULL   -- referenca na predmet
+ *   IDVrstaKvaliteta  int       NOT NULL   -- najverovatnije FK na katalog
+ *                                              kvaliteta/destinacije (K-A1,
+ *                                              K-S=škart…)
+ *   IDPozicija        int       NOT NULL
+ *   SifraRadnika      int       NOT NULL   -- ko je premestio
+ *   Datum             datetime  NOT NULL
+ *   Kolicina          int       NOT NULL
+ *   DatumIVremeUnosa  datetime  NULL
  *
- * Najverovatnije BigTehn imenovanje (na osnovu konvencije: tRadneJedinice,
- * tOperacije, tRadnici):
- *   IDLokacije, SifraLokacije, NazivLokacije, IDRadneJedinice, Aktivan
+ * Ovo NIJE katalog — to je TRANSAKCIONI LOG kretanja delova kroz proizvodnju
+ * (jedan red = "radnik X premestio Y komada predmeta Z, RN W, na destinaciju
+ * IDVrstaKvaliteta, na datum D"). Ide u Fazu 2 (analitika/workflow).
  *
- * Alternativna imena koja sam video u sličnim BigTehn instalacijama:
- *   ID, Sifra, Naziv, Tip, VrstaLokacije
+ * TODO Faza 2:
+ *   1) Pronaći pravi katalog destinacija — verovatno `tVrsteKvalitetaDelova`
+ *      (potvrditi preko `npm run discover:columns -- tVrsteKvalitetaDelova`).
+ *   2) Sinhronizovati ga kao `bigtehn_quality_locations_cache`.
+ *   3) `tLokacijeDelova` sinhronizovati kao transakcionu `bigtehn_part_movements`
+ *      tabelu (incremental sync po `DatumIVremeUnosa`).
  */
-const SQL = `
-  SELECT
-    IDLokacije                       AS id,
-    LTRIM(RTRIM(SifraLokacije))      AS code,
-    LTRIM(RTRIM(NazivLokacije))      AS name,
-    LTRIM(RTRIM(IDRadneJedinice))    AS department_id,
-    ISNULL(Aktivan, 0)               AS is_active
-  FROM tLokacijeDelova
-  WHERE IDLokacije IS NOT NULL;
-`;
-
-function mapRow(row) {
-  return {
-    id: row.id,
-    code: row.code || `(loc-${row.id})`,
-    name: row.name || null,
-    department_id: row.department_id || null,
-    is_active: !!row.is_active,
-    synced_at: new Date().toISOString(),
-  };
-}
-
 export async function syncLocations() {
   const run = await startRun('catalog_locations');
-  log.info('start');
-  try {
-    const rows = await runQuery(SQL);
-    log.info(
-      { count: rows.length, active: rows.filter((r) => r.is_active).length },
-      'fetched from BigTehn',
-    );
-
-    const payload = rows.map(mapRow);
-    const { total } = await upsertChunked('bigtehn_locations_cache', payload, 'id');
-
-    await finishRun(run, { rowsUpdated: total });
-    log.info({ upserted: total }, 'done');
-    return { total };
-  } catch (err) {
-    log.error({ err }, 'failed');
-    await failRun(run, err);
-    throw err;
-  }
+  const msg =
+    'syncLocations je ISKLJUČEN: tLokacijeDelova nije katalog već transakcioni log. ' +
+    'Vidi NOTE u src/jobs/syncLocations.js — premešteno u Fazu 2.';
+  log.warn(msg);
+  const err = new Error(msg);
+  await failRun(run, err);
+  throw err;
 }
