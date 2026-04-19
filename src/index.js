@@ -5,7 +5,10 @@ import { syncCustomers } from './jobs/syncCustomers.js';
 import { syncDepartments } from './jobs/syncDepartments.js';
 import { syncLocations } from './jobs/syncLocations.js';
 import { syncMachines } from './jobs/syncMachines.js';
+import { syncPositions } from './jobs/syncPositions.js';
+import { syncQualityTypes } from './jobs/syncQualityTypes.js';
 import { syncWorkers } from './jobs/syncWorkers.js';
+import { syncWorkerTypes } from './jobs/syncWorkerTypes.js';
 import { logger } from './logger.js';
 import { startScheduler } from './scheduler.js';
 
@@ -31,6 +34,17 @@ async function runOne(jobName) {
       return;
     case 'workers':
       await syncWorkers();
+      return;
+    case 'worker_types':
+    case 'worker-types':
+      await syncWorkerTypes();
+      return;
+    case 'quality_types':
+    case 'quality-types':
+      await syncQualityTypes();
+      return;
+    case 'positions':
+      await syncPositions();
       return;
     case 'locations':
       await syncLocations();

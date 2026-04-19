@@ -2,9 +2,9 @@
 
 Read-only Node.js servis koji sinhronizuje BigTehn (SQL Server `QBigTehn`) → Supabase cache. Deploy: Windows Service na firma serveru gde je BigTehn SQL.
 
-**Faza 1B (trenutno):** Sinhronizuje **4 kataloga** svako jutro u 06:00 — sektori, mašine, komitenti, radnici. Ne menja ni jedan red u BigTehn-u.
+**Faza 1B + B.1 (trenutno):** Sinhronizuje **7 kataloga** svako jutro u 06:00 — sektori, mašine, komitenti, vrste radnika, radnici, vrste kvaliteta, pozicije/police. Ne menja ni jedan red u BigTehn-u.
 
-> **Locations isključen iz Faze 1B.** `BIGTEHN_DATA_MAP.md` je pretpostavio da je `tLokacijeDelova` katalog polica (K-A1, K-S=škart…), ali je `discover:columns` 2026-04-18 pokazao da je to **transakcioni log kretanja delova** (IDRN, IDPredmet, IDPozicija, SifraRadnika, Datum, Kolicina, IDVrstaKvaliteta). Pravi katalog destinacija/kvaliteta je verovatno `tVrsteKvalitetaDelova` — ide u Fazu 2 zajedno sa transakcionim sync-om kretanja delova. `syncLocations.js` je sada disabled stub koji eksplicitno odbija da se pokrene.
+> **Locations isključen.** `BIGTEHN_DATA_MAP.md` je pretpostavio da je `tLokacijeDelova` katalog polica (K-A1, K-S=škart…), ali je `discover:columns` 2026-04-18 pokazao da je to **transakcioni log kretanja delova** (IDRN, IDPredmet, IDPozicija, SifraRadnika, Datum, Kolicina, IDVrstaKvaliteta). Pravi katalog polica je `tPozicije` (sad sinhronizovan kao `positions`), a `tLokacijeDelova` ide u Fazu 2 kao incremental transakcioni sync. `syncLocations.js` je sada disabled stub koji eksplicitno odbija da se pokrene.
 
 Pun arhitekturni opis: vidi [`BIGTEHN_DATA_MAP.md`](https://github.com/Servoteh/servoteh-plan-montaze/blob/main/docs/BIGTEHN_DATA_MAP.md) (u `servoteh-plan-montaze` repo-u).
 
@@ -18,9 +18,16 @@ Pun arhitekturni opis: vidi [`BIGTEHN_DATA_MAP.md`](https://github.com/Servoteh/
 | `machines`    | `tOperacije`     | `bigtehn_machines_cache`    | dnevno 06:00 | rj_code, name, department_id, no_procedure, … |
 | `customers`   | `Komitenti`      | `bigtehn_customers_cache`   | dnevno 06:00 | id, name, short_name, city, tax_id |
 | `workers`     | `tRadnici`       | `bigtehn_workers_cache`     | dnevno 06:00 | id, full_name, short_name, department_id, card_id, is_active **(BEZ Password kolona — vidi sekciju 6.6 BIGTEHN_DATA_MAP.md)** |
-| ~~`locations`~~ | ~~`tLokacijeDelova`~~ | — | **DISABLED** | Premešteno u Fazu 2. Vidi napomenu iznad. |
+| `worker_types`  | `tVrsteRadnika`        | `bigtehn_worker_types_cache`  | dnevno 06:00 | id, name, has_extra_auth |
+| `quality_types` | `tVrsteKvalitetaDelova`| `bigtehn_quality_types_cache` | dnevno 06:00 | id, name |
+| `positions`     | `tPozicije`            | `bigtehn_positions_cache`     | dnevno 06:00 | id, code, description (police K-A1, K-S=škart…) |
+| ~~`locations`~~ | ~~`tLokacijeDelova`~~ | — | **DISABLED** | Premešteno u Fazu 2 (transakcioni sync). |
 
 Svaki run loguje u `bridge_sync_log` tabelu (i u composite `catalogs_daily` red).
+
+**Pre-deploy SQL migracije** (u Supabase SQL Editor, redom):
+1. `sql/migrations/001_bridge_catalogs_phase1b.sql` — bridge_sync_log + 4 osnovna cache-a (Faza 1B)
+2. `sql/migrations/002_bridge_b1_micro_catalogs.sql` — 3 mala kataloga (Sprint B.1)
 
 ---
 
@@ -31,7 +38,7 @@ Svaki run loguje u `bridge_sync_log` tabelu (i u composite `catalogs_daily` red)
 - **Node.js 20 ili 22** (`node --version`)
 - Mrežni pristup do `Vasa-SQL:5765`
 - Mrežni pristup do `*.supabase.co` (HTTPS 443)
-- **SQL Server čitalac** — preporuka: kreirati zaseban login `bridge_reader` sa SELECT pravima na: `tRadneJedinice`, `tOperacije`, `Komitenti`, `tRadnici`. Faza 2 dodaje `tVrsteKvalitetaDelova` + `tLokacijeDelova` (transakciono). Faza 1C dodaje `Predmeti`, `tRN`, `tStavkeRN`, `tTehPostupak`.
+- **SQL Server čitalac** — preporuka: kreirati zaseban login `bridge_reader` sa SELECT pravima na (Faza 1B + B.1): `tRadneJedinice`, `tOperacije`, `Komitenti`, `tRadnici`, `tVrsteRadnika`, `tVrsteKvalitetaDelova`, `tPozicije`. Faza 1C dodaje `Predmeti`, `tRN`, `tStavkeRN`, `tTehPostupak`, `tLansiranRN`, `tSaglasanRN`. Faza 2 dodaje `tLokacijeDelova` (transakciono).
 - Za servis instalaciju: **PowerShell pokrenut kao Administrator**
 
 ### U Supabase-u (PRE prvog run-a Bridge servisa)
@@ -141,9 +148,12 @@ npm run sync:departments
 npm run sync:machines
 npm run sync:customers
 npm run sync:workers
+npm run sync:worker-types
+npm run sync:quality-types
+npm run sync:positions
 # napomena: `npm run sync:locations` namerno baca grešku (disabled stub)
 
-# 3) ručno pokrenuti sve 4 katalog odjednom
+# 3) ručno pokrenuti svih 7 kataloga odjednom
 npm run sync:catalogs
 
 # (debug) — otkrij stvarne kolone neke BigTehn tabele:
