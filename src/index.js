@@ -3,6 +3,7 @@ import { closeSqlPool } from './db/sqlserver.js';
 import { syncCatalogs } from './jobs/syncCatalogs.js';
 import { syncCustomers } from './jobs/syncCustomers.js';
 import { syncDepartments } from './jobs/syncDepartments.js';
+import { syncItems } from './jobs/syncItems.js';
 import { syncLocations } from './jobs/syncLocations.js';
 import { syncMachines } from './jobs/syncMachines.js';
 import { syncPositions } from './jobs/syncPositions.js';
@@ -45,6 +46,9 @@ async function runOne(jobName) {
       return;
     case 'positions':
       await syncPositions();
+      return;
+    case 'items':
+      await syncItems();
       return;
     case 'locations':
       await syncLocations();

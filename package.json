@@ -17,6 +17,7 @@
     "sync:worker-types": "node src/index.js --job=worker_types --once",
     "sync:quality-types": "node src/index.js --job=quality_types --once",
     "sync:positions": "node src/index.js --job=positions --once",
+    "sync:items": "node src/index.js --job=items --once",
     "sync:locations": "node src/index.js --job=locations --once",
     "sync:catalogs": "node src/index.js --job=catalogs --once",
     "service:install": "node src/service/install.js",

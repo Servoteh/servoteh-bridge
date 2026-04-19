@@ -2,6 +2,7 @@ import { logJob } from '../logger.js';
 import { failRun, finishRun, startRun } from './syncLog.js';
 import { syncCustomers } from './syncCustomers.js';
 import { syncDepartments } from './syncDepartments.js';
+import { syncItems } from './syncItems.js';
 import { syncMachines } from './syncMachines.js';
 import { syncPositions } from './syncPositions.js';
 import { syncQualityTypes } from './syncQualityTypes.js';
@@ -15,16 +16,17 @@ import { syncWorkerTypes } from './syncWorkerTypes.js';
 const log = logJob('syncCatalogs');
 
 /**
- * Zbirni dnevni job: 7 kataloga (Faza 1B + B.1 dopuna).
+ * Zbirni dnevni job: 8 kataloga (Faza 1B + B.1 + B.2.1 dopuna).
  *
  * Redosled je važan zbog FK-ova u Supabase-u:
  *   1) departments    (parent)
  *   2) machines       (FK -> departments.id)
- *   3) customers      (nezavisno)
+ *   3) customers      (nezavisno; referenciran iz items)
  *   4) worker_types   (referenciran iz workers.worker_type_id)
  *   5) workers        (FK -> departments.id, worker_types.id)
  *   6) quality_types  (referenciran iz tRN/tTehPostupak — Faza 1C)
  *   7) positions      (referenciran iz tLokacijeDelova — Faza 2)
+ *   8) items          (Predmeti; referenciran iz tRN — Faza 1C)
  *
  * Svaki underlying job ima svoj sync_log zapis. Ovaj wrapper takođe loguje
  * jedan composite zapis ('catalogs_daily') sa zbirnim rows_updated.
@@ -48,9 +50,11 @@ export async function syncCatalogs() {
     total += qt.total;
     const p = await syncPositions();
     total += p.total;
+    const i = await syncItems();
+    total += i.total;
 
     await finishRun(run, { rowsUpdated: total });
-    log.info({ totalRows: total }, 'all 7 catalogs done');
+    log.info({ totalRows: total }, 'all 8 catalogs done');
     return { total };
   } catch (err) {
     log.error({ err }, 'catalogs job failed');
