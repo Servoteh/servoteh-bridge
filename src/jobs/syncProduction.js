@@ -1,4 +1,5 @@
 import { logJob } from '../logger.js';
+import { syncPartMovements } from './syncPartMovements.js';
 import { syncWorkOrderApprovals } from './syncWorkOrderApprovals.js';
 import { syncWorkOrderLaunches } from './syncWorkOrderLaunches.js';
 import { syncWorkOrderLines } from './syncWorkOrderLines.js';
@@ -8,13 +9,14 @@ import { failRun, finishRun, startRun } from './syncLog.js';
 const log = logJob('syncProduction');
 
 /**
- * Composite production sync — pokreće sva 4 incremental joba.
+ * Composite production sync — pokreće svih 5 incremental jobova.
  *
  * Redosled (FK redosled da bismo izbegli orphan redove u UI-u):
- *   1) syncWorkOrders        (tRN)              — parent
- *   2) syncWorkOrderLines    (tStavkeRN)         — FK -> tRN
- *   3) syncWorkOrderLaunches (tLansiranRN)       — FK -> tRN
- *   4) syncWorkOrderApprovals (tSaglasanRN)      — FK -> tRN
+ *   1) syncWorkOrders         (tRN)              — parent
+ *   2) syncWorkOrderLines     (tStavkeRN)         — FK -> tRN
+ *   3) syncWorkOrderLaunches  (tLansiranRN)       — FK -> tRN
+ *   4) syncWorkOrderApprovals (tSaglasanRN)       — FK -> tRN
+ *   5) syncPartMovements      (tLokacijeDelova)   — FK -> tRN, Predmeti, tPozicije
  *
  * Pokreće se cron-om svakih 15 minuta. Tipično traje <5 sekundi po runu
  * (samo izmenjeni redovi zahvaljujući watermark-u).
@@ -25,7 +27,7 @@ const log = logJob('syncProduction');
  */
 export async function syncProduction() {
   const run = await startRun('production_15min');
-  log.info('start (composite, 4 jobs)');
+  log.info('start (composite, 5 jobs)');
   let total = 0;
   try {
     const wo = await syncWorkOrders();
@@ -40,6 +42,9 @@ export async function syncProduction() {
     const approvals = await syncWorkOrderApprovals();
     total += approvals.total;
 
+    const movements = await syncPartMovements();
+    total += movements.total;
+
     await finishRun(run, { rowsUpdated: total });
     log.info(
       {
@@ -49,6 +54,7 @@ export async function syncProduction() {
           lines: lines.total,
           launches: launches.total,
           approvals: approvals.total,
+          part_movements: movements.total,
         },
       },
       'production sync done',

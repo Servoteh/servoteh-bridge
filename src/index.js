@@ -6,6 +6,7 @@ import { syncDepartments } from './jobs/syncDepartments.js';
 import { syncItems } from './jobs/syncItems.js';
 import { syncLocations } from './jobs/syncLocations.js';
 import { syncMachines } from './jobs/syncMachines.js';
+import { syncPartMovements } from './jobs/syncPartMovements.js';
 import { syncPositions } from './jobs/syncPositions.js';
 import { syncProduction } from './jobs/syncProduction.js';
 import { syncQualityTypes } from './jobs/syncQualityTypes.js';
@@ -76,6 +77,11 @@ async function runOne(jobName) {
     case 'work-order-approvals':
     case 'approvals':
       await syncWorkOrderApprovals();
+      return;
+    case 'part_movements':
+    case 'part-movements':
+    case 'movements':
+      await syncPartMovements();
       return;
     case 'production':
       await syncProduction();

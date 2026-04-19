@@ -24,6 +24,7 @@
     "sync:lines": "node src/index.js --job=lines --once",
     "sync:launches": "node src/index.js --job=launches --once",
     "sync:approvals": "node src/index.js --job=approvals --once",
+    "sync:part-movements": "node src/index.js --job=part_movements --once",
     "sync:production": "node src/index.js --job=production --once",
     "service:install": "node src/service/install.js",
     "service:uninstall": "node src/service/uninstall.js",
