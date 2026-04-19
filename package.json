@@ -29,6 +29,7 @@
     "service:install": "node src/service/install.js",
     "service:uninstall": "node src/service/uninstall.js",
     "test:connection": "node src/cli/testConnection.js",
+    "test:alert": "node src/cli/testAlert.js",
     "discover:columns": "node src/cli/discoverColumns.js",
     "list:tables": "node src/cli/listTables.js"
   },
