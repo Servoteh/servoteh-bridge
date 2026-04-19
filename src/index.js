@@ -10,6 +10,7 @@ import { syncPartMovements } from './jobs/syncPartMovements.js';
 import { syncPositions } from './jobs/syncPositions.js';
 import { syncProduction } from './jobs/syncProduction.js';
 import { syncQualityTypes } from './jobs/syncQualityTypes.js';
+import { syncTechRouting } from './jobs/syncTechRouting.js';
 import { syncWorkOrderApprovals } from './jobs/syncWorkOrderApprovals.js';
 import { syncWorkOrderLaunches } from './jobs/syncWorkOrderLaunches.js';
 import { syncWorkOrderLines } from './jobs/syncWorkOrderLines.js';
@@ -82,6 +83,11 @@ async function runOne(jobName) {
     case 'part-movements':
     case 'movements':
       await syncPartMovements();
+      return;
+    case 'tech_routing':
+    case 'tech-routing':
+    case 'routing':
+      await syncTechRouting();
       return;
     case 'production':
       await syncProduction();

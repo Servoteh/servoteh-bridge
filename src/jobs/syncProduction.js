@@ -1,5 +1,6 @@
 import { logJob } from '../logger.js';
 import { syncPartMovements } from './syncPartMovements.js';
+import { syncTechRouting } from './syncTechRouting.js';
 import { syncWorkOrderApprovals } from './syncWorkOrderApprovals.js';
 import { syncWorkOrderLaunches } from './syncWorkOrderLaunches.js';
 import { syncWorkOrderLines } from './syncWorkOrderLines.js';
@@ -9,7 +10,7 @@ import { failRun, finishRun, startRun } from './syncLog.js';
 const log = logJob('syncProduction');
 
 /**
- * Composite production sync — pokreće svih 5 incremental jobova.
+ * Composite production sync — pokreće svih 6 incremental jobova.
  *
  * Redosled (FK redosled da bismo izbegli orphan redove u UI-u):
  *   1) syncWorkOrders         (tRN)              — parent
@@ -17,6 +18,8 @@ const log = logJob('syncProduction');
  *   3) syncWorkOrderLaunches  (tLansiranRN)       — FK -> tRN
  *   4) syncWorkOrderApprovals (tSaglasanRN)       — FK -> tRN
  *   5) syncPartMovements      (tLokacijeDelova)   — FK -> tRN, Predmeti, tPozicije
+ *   6) syncTechRouting        (tTehPostupak)      — FK -> tRN, Predmeti, tRadnici;
+ *                                                   autoritativni izvor "operacija završena"
  *
  * Pokreće se cron-om svakih 15 minuta. Tipično traje <5 sekundi po runu
  * (samo izmenjeni redovi zahvaljujući watermark-u).
@@ -27,7 +30,7 @@ const log = logJob('syncProduction');
  */
 export async function syncProduction() {
   const run = await startRun('production_15min');
-  log.info('start (composite, 5 jobs)');
+  log.info('start (composite, 6 jobs)');
   let total = 0;
   try {
     const wo = await syncWorkOrders();
@@ -45,6 +48,9 @@ export async function syncProduction() {
     const movements = await syncPartMovements();
     total += movements.total;
 
+    const techRouting = await syncTechRouting();
+    total += techRouting.total;
+
     await finishRun(run, { rowsUpdated: total });
     log.info(
       {
@@ -55,6 +61,7 @@ export async function syncProduction() {
           launches: launches.total,
           approvals: approvals.total,
           part_movements: movements.total,
+          tech_routing: techRouting.total,
         },
       },
       'production sync done',

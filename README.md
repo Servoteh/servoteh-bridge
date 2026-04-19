@@ -28,8 +28,9 @@ Pun arhitekturni opis: vidi [`BIGTEHN_DATA_MAP.md`](https://github.com/Servoteh/
 | `launches`        | `tLansiranRN`  | `bigtehn_work_order_launches_cache`    | **15 min** (delta) | id, work_order_id, lansiran, author/modifier worker + potpis |
 | `approvals`       | `tSaglasanRN`  | `bigtehn_work_order_approvals_cache`   | **15 min** (delta) | id, work_order_id, saglasan, author/modifier worker + potpis |
 | `part_movements`  | `tLokacijeDelova` | `bigtehn_part_movements_cache`      | **15 min** (delta) | id, work_order_id, item_id, position_id, worker_id, quality_type_id, datum, kolicina (transfer delova kroz police, ~10k+ redova) |
+| `tech_routing`    | `tTehPostupak` | `bigtehn_tech_routing_cache`           | **15 min** (delta) | id, work_order_id, item_id, worker_id, operacija, machine_code, komada, **prn_timer_seconds (stvarno vreme)**, started_at, finished_at, **is_completed** (autoritativni signal "operacija završena", napomena, ident_broj) |
 
-**Watermark logika (Sprint B.2.2 + B.2.3):** Svih 5 production jobova čitaju zadnji uspešan `started_at` iz `bridge_sync_log` (sa 60s safety overlap-om) i povlače samo redove sa `DIVIspravke[RN] > watermark` (4 RN tabele) odnosno `COALESCE(DatumIVremeUnosa, Datum) > watermark` (kretanje delova). Prvi run koristi fallback od 30 dana. UPSERT je idempotentan, pa duplikati od overlap-a ne prave problem.
+**Watermark logika (Sprint B.2.2 + B.2.3 + F.1):** Svih 6 production jobova čitaju zadnji uspešan `started_at` iz `bridge_sync_log` (sa 60s safety overlap-om) i povlače samo redove sa `DIVIspravke[RN] > watermark` (4 RN tabele), `COALESCE(DatumIVremeUnosa, Datum) > watermark` (kretanje delova), odnosno `COALESCE(DatumIVremeZavrsetka, DatumIVremeUnosa) > watermark` (tehnološki postupak — hvata i nove prijave i kompletiranje postojećih). Prvi run koristi fallback od 30 dana. UPSERT je idempotentan, pa duplikati od overlap-a ne prave problem.
 
 Svaki run loguje u `bridge_sync_log` tabelu (i u composite `catalogs_daily` / `production_15min` red).
 
@@ -39,6 +40,7 @@ Svaki run loguje u `bridge_sync_log` tabelu (i u composite `catalogs_daily` / `p
 3. `sql/migrations/003_bridge_b21_items.sql` — predmeti (Sprint B.2.1)
 4. `sql/migrations/004_bridge_b22_production.sql` — 4 production cache tabele + RLS (Sprint B.2.2)
 5. `sql/migrations/005_bridge_b23_part_movements.sql` — kretanje delova + RLS (Sprint B.2.3)
+6. `sql/migrations/006_bridge_f1_tech_routing.sql` — tehnološki postupak (tTehPostupak) + RLS (Sprint F.1, podrška za Plan Proizvodnje)
 
 ---
 
@@ -49,7 +51,7 @@ Svaki run loguje u `bridge_sync_log` tabelu (i u composite `catalogs_daily` / `p
 - **Node.js 20 ili 22** (`node --version`)
 - Mrežni pristup do `Vasa-SQL:5765`
 - Mrežni pristup do `*.supabase.co` (HTTPS 443)
-- **SQL Server čitalac** — preporuka: kreirati zaseban login `bridge_reader` sa SELECT pravima na (Faza 1B + B.1 + B.2.1 + B.2.2 + B.2.3): `tRadneJedinice`, `tOperacije`, `Komitenti`, `tRadnici`, `tVrsteRadnika`, `tVrsteKvalitetaDelova`, `tPozicije`, `Predmeti`, `tRN`, `tStavkeRN`, `tLansiranRN`, `tSaglasanRN`, **`tLokacijeDelova`**. Faza 2 dodaje `tTehPostupak`.
+- **SQL Server čitalac** — preporuka: kreirati zaseban login `bridge_reader` sa SELECT pravima na (Faza 1B + B.1 + B.2.1 + B.2.2 + B.2.3 + F.1): `tRadneJedinice`, `tOperacije`, `Komitenti`, `tRadnici`, `tVrsteRadnika`, `tVrsteKvalitetaDelova`, `tPozicije`, `Predmeti`, `tRN`, `tStavkeRN`, `tLansiranRN`, `tSaglasanRN`, `tLokacijeDelova`, **`tTehPostupak`**.
 - Za servis instalaciju: **PowerShell pokrenut kao Administrator**
 
 ### U Supabase-u (PRE prvog run-a Bridge servisa)
@@ -174,7 +176,8 @@ npm run sync:lines
 npm run sync:launches
 npm run sync:approvals
 npm run sync:part-movements
-# ili svih 5 odjednom:
+npm run sync:tech-routing
+# ili svih 6 odjednom:
 npm run sync:production
 
 # (debug) — otkrij stvarne kolone neke BigTehn tabele:
@@ -217,6 +220,7 @@ U Supabase SQL Editor, **redom**:
 3. `sql/migrations/003_bridge_b21_items.sql`
 4. `sql/migrations/004_bridge_b22_production.sql`
 5. `sql/migrations/005_bridge_b23_part_movements.sql`
+6. `sql/migrations/006_bridge_f1_tech_routing.sql`
 
 Provera: `SELECT count(*) FROM bridge_sync_log;` mora vratiti `0` (ili više ako si već runovao Bridge).
 
@@ -237,6 +241,7 @@ GRANT SELECT ON dbo.tStavkeRN              TO bridge_reader;
 GRANT SELECT ON dbo.tLansiranRN            TO bridge_reader;
 GRANT SELECT ON dbo.tSaglasanRN            TO bridge_reader;
 GRANT SELECT ON dbo.tLokacijeDelova        TO bridge_reader;
+GRANT SELECT ON dbo.tTehPostupak           TO bridge_reader;
 ```
 
 ### Korak 4 — Klon + install + `.env`
@@ -276,9 +281,9 @@ npm run test:connection
 npm run sync:catalogs
 # Mora završiti bez greške, videti "all 8 catalogs done" + brojeve.
 
-# 3. Svih 5 production jobova
+# 3. Svih 6 production jobova
 npm run sync:production
-# Mora završiti bez greške, videti breakdown po 5 sub-jobs-a.
+# Mora završiti bez greške, videti breakdown po 6 sub-jobs-a.
 
 # Provera u Supabase Table Editor:
 #   bigtehn_workers_cache (>50 redova)
