@@ -25,11 +25,26 @@
 [CmdletBinding()]
 param(
   [int]$RetentionDays = 30,
-  [string]$LogDir = (Join-Path $PSScriptRoot "..\logs"),
+  [string]$LogDir = "",
   [string]$Pattern = "bridge-*.log"
 )
 
 $ErrorActionPreference = "Stop"
+
+# Ako -LogDir nije prosledjen, odredi ga relativno na skriptu.
+# $PSScriptRoot moze biti prazan kad se skripta pokrene preko `powershell.exe -File`
+# (zavisi od verzije), pa koristimo i fallback na $MyInvocation.MyCommand.Path.
+if ([string]::IsNullOrWhiteSpace($LogDir)) {
+  $scriptDir = $PSScriptRoot
+  if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+  }
+  if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+    Write-Host "[rotate-logs] Ne mogu da odredim putanju skripte; prosledi -LogDir eksplicitno." -ForegroundColor Red
+    exit 1
+  }
+  $LogDir = Join-Path $scriptDir "..\logs"
+}
 
 $resolvedLogDir = Resolve-Path -ErrorAction SilentlyContinue $LogDir
 if (-not $resolvedLogDir) {
