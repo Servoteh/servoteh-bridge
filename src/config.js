@@ -47,6 +47,7 @@ export const config = Object.freeze({
   scheduler: Object.freeze({
     enabled: optBool('SCHEDULER_ENABLED', true),
     catalogsCron: optStr('SCHEDULE_CATALOGS_CRON', '0 6 * * *'),
+    productionCron: optStr('SCHEDULE_PRODUCTION_CRON', '*/15 * * * *'),
     timezone: optStr('TZ', 'Europe/Belgrade'),
   }),
   logger: Object.freeze({

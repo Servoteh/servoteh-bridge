@@ -7,7 +7,12 @@ import { syncItems } from './jobs/syncItems.js';
 import { syncLocations } from './jobs/syncLocations.js';
 import { syncMachines } from './jobs/syncMachines.js';
 import { syncPositions } from './jobs/syncPositions.js';
+import { syncProduction } from './jobs/syncProduction.js';
 import { syncQualityTypes } from './jobs/syncQualityTypes.js';
+import { syncWorkOrderApprovals } from './jobs/syncWorkOrderApprovals.js';
+import { syncWorkOrderLaunches } from './jobs/syncWorkOrderLaunches.js';
+import { syncWorkOrderLines } from './jobs/syncWorkOrderLines.js';
+import { syncWorkOrders } from './jobs/syncWorkOrders.js';
 import { syncWorkers } from './jobs/syncWorkers.js';
 import { syncWorkerTypes } from './jobs/syncWorkerTypes.js';
 import { logger } from './logger.js';
@@ -52,6 +57,28 @@ async function runOne(jobName) {
       return;
     case 'locations':
       await syncLocations();
+      return;
+    case 'work_orders':
+    case 'work-orders':
+      await syncWorkOrders();
+      return;
+    case 'work_order_lines':
+    case 'work-order-lines':
+    case 'lines':
+      await syncWorkOrderLines();
+      return;
+    case 'work_order_launches':
+    case 'work-order-launches':
+    case 'launches':
+      await syncWorkOrderLaunches();
+      return;
+    case 'work_order_approvals':
+    case 'work-order-approvals':
+    case 'approvals':
+      await syncWorkOrderApprovals();
+      return;
+    case 'production':
+      await syncProduction();
       return;
     case 'catalogs':
     case null:

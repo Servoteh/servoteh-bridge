@@ -2,7 +2,7 @@
 
 Read-only Node.js servis koji sinhronizuje BigTehn (SQL Server `QBigTehn`) → Supabase cache. Deploy: Windows Service na firma serveru gde je BigTehn SQL.
 
-**Faza 1B + B.1 + B.2.1 (trenutno):** Sinhronizuje **8 kataloga** svako jutro u 06:00 — sektori, mašine, komitenti, vrste radnika, radnici, vrste kvaliteta, pozicije/police, **predmeti**. Ne menja ni jedan red u BigTehn-u.
+**Faza 1B + B.1 + B.2.1 + B.2.2 (trenutno):** Sinhronizuje **8 kataloga** svako jutro u 06:00 (sektori, mašine, komitenti, vrste radnika, radnici, vrste kvaliteta, pozicije/police, predmeti) **+ production tracking svakih 15 minuta** (radni nalozi, operacije, lansiranja, saglasnosti — incremental po watermark-u). Ne menja ni jedan red u BigTehn-u.
 
 > **Locations isključen.** `BIGTEHN_DATA_MAP.md` je pretpostavio da je `tLokacijeDelova` katalog polica (K-A1, K-S=škart…), ali je `discover:columns` 2026-04-18 pokazao da je to **transakcioni log kretanja delova** (IDRN, IDPredmet, IDPozicija, SifraRadnika, Datum, Kolicina, IDVrstaKvaliteta). Pravi katalog polica je `tPozicije` (sad sinhronizovan kao `positions`), a `tLokacijeDelova` ide u Fazu 2 kao incremental transakcioni sync. `syncLocations.js` je sada disabled stub koji eksplicitno odbija da se pokrene.
 
@@ -23,13 +23,20 @@ Pun arhitekturni opis: vidi [`BIGTEHN_DATA_MAP.md`](https://github.com/Servoteh/
 | `positions`     | `tPozicije`            | `bigtehn_positions_cache`     | dnevno 06:00 | id, code, description (police K-A1, K-S=škart…) |
 | `items`         | `Predmeti`             | `bigtehn_items_cache`         | dnevno 06:00 | id, broj_predmeta, naziv_predmeta, status, customer_id, datumi (~10k+ redova) |
 | ~~`locations`~~ | ~~`tLokacijeDelova`~~ | — | **DISABLED** | Premešteno u Fazu 2 (transakcioni sync). |
+| `work_orders`     | `tRN`          | `bigtehn_work_orders_cache`            | **15 min** (delta) | id, ident_broj, item_id, customer_id, broj_crteza, naziv_dela, status_rn, rok_izrade, … |
+| `lines`           | `tStavkeRN`    | `bigtehn_work_order_lines_cache`       | **15 min** (delta) | id, work_order_id, operacija, machine_code, opis_rada, tpz, tk, prioritet |
+| `launches`        | `tLansiranRN`  | `bigtehn_work_order_launches_cache`    | **15 min** (delta) | id, work_order_id, lansiran, author/modifier worker + potpis |
+| `approvals`       | `tSaglasanRN`  | `bigtehn_work_order_approvals_cache`   | **15 min** (delta) | id, work_order_id, saglasan, author/modifier worker + potpis |
 
-Svaki run loguje u `bridge_sync_log` tabelu (i u composite `catalogs_daily` red).
+**Watermark logika (Sprint B.2.2):** Sva 4 production joba čitaju zadnji uspešan `started_at` iz `bridge_sync_log` (sa 60s safety overlap-om) i povlače samo redove sa `DIVIspravke[RN] > watermark`. Prvi run koristi fallback od 30 dana. UPSERT je idempotentan, pa duplikati od overlap-a ne prave problem.
+
+Svaki run loguje u `bridge_sync_log` tabelu (i u composite `catalogs_daily` / `production_15min` red).
 
 **Pre-deploy SQL migracije** (u Supabase SQL Editor, redom):
 1. `sql/migrations/001_bridge_catalogs_phase1b.sql` — bridge_sync_log + 4 osnovna cache-a (Faza 1B)
 2. `sql/migrations/002_bridge_b1_micro_catalogs.sql` — 3 mala kataloga (Sprint B.1)
 3. `sql/migrations/003_bridge_b21_items.sql` — predmeti (Sprint B.2.1)
+4. `sql/migrations/004_bridge_b22_production.sql` — 4 production cache tabele + RLS (Sprint B.2.2)
 
 ---
 
@@ -40,7 +47,7 @@ Svaki run loguje u `bridge_sync_log` tabelu (i u composite `catalogs_daily` red)
 - **Node.js 20 ili 22** (`node --version`)
 - Mrežni pristup do `Vasa-SQL:5765`
 - Mrežni pristup do `*.supabase.co` (HTTPS 443)
-- **SQL Server čitalac** — preporuka: kreirati zaseban login `bridge_reader` sa SELECT pravima na (Faza 1B + B.1 + B.2.1): `tRadneJedinice`, `tOperacije`, `Komitenti`, `tRadnici`, `tVrsteRadnika`, `tVrsteKvalitetaDelova`, `tPozicije`, `Predmeti`. Faza 1C dodaje `tRN`, `tStavkeRN`, `tTehPostupak`, `tLansiranRN`, `tSaglasanRN`. Faza 2 dodaje `tLokacijeDelova` (transakciono).
+- **SQL Server čitalac** — preporuka: kreirati zaseban login `bridge_reader` sa SELECT pravima na (Faza 1B + B.1 + B.2.1 + B.2.2): `tRadneJedinice`, `tOperacije`, `Komitenti`, `tRadnici`, `tVrsteRadnika`, `tVrsteKvalitetaDelova`, `tPozicije`, `Predmeti`, **`tRN`, `tStavkeRN`, `tLansiranRN`, `tSaglasanRN`**. Faza 2 dodaje `tLokacijeDelova` (transakciono) + `tTehPostupak`.
 - Za servis instalaciju: **PowerShell pokrenut kao Administrator**
 
 ### U Supabase-u (PRE prvog run-a Bridge servisa)
@@ -159,11 +166,19 @@ npm run sync:items
 # 3) ručno pokrenuti svih 8 kataloga odjednom
 npm run sync:catalogs
 
+# 4) production tracking (Sprint B.2.2) — incremental po watermark-u
+npm run sync:work-orders
+npm run sync:lines
+npm run sync:launches
+npm run sync:approvals
+# ili sve 4 odjednom:
+npm run sync:production
+
 # (debug) — otkrij stvarne kolone neke BigTehn tabele:
 npm run discover:columns -- tVrsteKvalitetaDelova
 npm run discover:columns -- tRN
 
-# 4) idle režim sa scheduler-om (čeka 06:00)
+# 5) idle režim sa scheduler-om (čeka 06:00 za kataloge i */15 min za production)
 npm start
 ```
 
@@ -296,11 +311,11 @@ npm run service:uninstall
 
 ---
 
-## Sledeće faze (van scope-a 1B)
+## Sledeće faze (van scope-a 1B + B.2.2)
 
-- **1C** — sync `Predmeti`, `tRN`, `tStavkeRN`, `tTehPostupak` (svakih 15 min, delta)
+- **1C-tehpostupak** — sync `tTehPostupak` (template operacija po crtežu) — read-only katalog/template
 - **1D** — overlays + upload crteža u Supabase
 - **1E** — write-back (lansiran/saglasan/tehpostupak/StatusRN)
-- **2** — kretanje delova: katalog destinacija/kvaliteta (`tVrsteKvalitetaDelova` → `bigtehn_quality_locations_cache`) + transakcioni sync `tLokacijeDelova` (`bigtehn_part_movements`, incremental po `DatumIVremeUnosa`)
+- **2** — kretanje delova: katalog destinacija/kvaliteta već je urađen kao `bigtehn_quality_types_cache` u Sprint B.1; ostaje **transakcioni sync `tLokacijeDelova`** (`bigtehn_part_movements`, incremental po `DatumIVremeUnosa`, takođe svakih 15 min)
 
 Plan: `BIGTEHN_DATA_MAP.md`, sekcija 8 (uz korekciju za sekciju 5/3.1 koja je netačno opisivala `tLokacijeDelova`).

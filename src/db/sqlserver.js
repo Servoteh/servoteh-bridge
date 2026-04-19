@@ -75,11 +75,31 @@ export async function closeSqlPool() {
 
 /**
  * Helper: izvrši SELECT i vrati `recordset` (niz redova kao plain objekti).
- * Pripremne (parametrizovane) upite — koristiti `request.input(...)`.
+ *
+ * @param {string} text - SQL query string
+ * @param {Record<string, {type: any, value: any}> | Record<string, any>} [params]
+ *        Optional parametri za prepared statement. Dva oblika:
+ *
+ *        1) Eksplicitan tip:
+ *           { watermark: { type: sql.DateTime, value: new Date() } }
+ *
+ *        2) Auto-detect (tip se izvodi iz JS tipa — preporučeno samo za
+ *           jednostavne slučajeve):
+ *           { watermark: new Date() }
  */
-export async function runQuery(text) {
+export async function runQuery(text, params) {
   const pool = await getSqlPool();
-  const result = await pool.request().query(text);
+  const request = pool.request();
+  if (params && typeof params === 'object') {
+    for (const [name, raw] of Object.entries(params)) {
+      if (raw && typeof raw === 'object' && 'type' in raw && 'value' in raw) {
+        request.input(name, raw.type, raw.value);
+      } else {
+        request.input(name, raw);
+      }
+    }
+  }
+  const result = await request.query(text);
   return result.recordset || [];
 }
 
