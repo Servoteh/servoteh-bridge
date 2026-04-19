@@ -10,6 +10,7 @@ import { syncPartMovements } from './jobs/syncPartMovements.js';
 import { syncPositions } from './jobs/syncPositions.js';
 import { syncProduction } from './jobs/syncProduction.js';
 import { syncQualityTypes } from './jobs/syncQualityTypes.js';
+import { syncBigtehnDrawings } from './jobs/syncBigtehnDrawings.js';
 import { syncTechRouting } from './jobs/syncTechRouting.js';
 import { syncWorkOrderApprovals } from './jobs/syncWorkOrderApprovals.js';
 import { syncWorkOrderLaunches } from './jobs/syncWorkOrderLaunches.js';
@@ -88,6 +89,11 @@ async function runOne(jobName) {
     case 'tech-routing':
     case 'routing':
       await syncTechRouting();
+      return;
+    case 'bigtehn_drawings':
+    case 'bigtehn-drawings':
+    case 'drawings':
+      await syncBigtehnDrawings();
       return;
     case 'production':
       await syncProduction();

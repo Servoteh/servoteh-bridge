@@ -48,6 +48,9 @@ export const config = Object.freeze({
     enabled: optBool('SCHEDULER_ENABLED', true),
     catalogsCron: optStr('SCHEDULE_CATALOGS_CRON', '0 6 * * *'),
     productionCron: optStr('SCHEDULE_PRODUCTION_CRON', '*/15 * * * *'),
+    /* F.5a: BigTehn crteži — default jednom dnevno u 7:00 (30 min posle catalogs).
+       Crteži se retko menjaju, nema potrebe za češćim sync-om. */
+    drawingsCron: optStr('SCHEDULE_DRAWINGS_CRON', '0 7 * * *'),
     timezone: optStr('TZ', 'Europe/Belgrade'),
   }),
   logger: Object.freeze({
@@ -61,6 +64,9 @@ export const config = Object.freeze({
     webhookUrl: optStr('ALERT_WEBHOOK_URL', ''),
   }),
   instanceName: optStr('BRIDGE_INSTANCE_NAME', 'servoteh-bridge'),
+  /* F.5a: Folder na BigBit serveru sa PDF crtežima (npr. C:\PDMExport\PDFImportovano).
+     Ako je prazno, syncBigtehnDrawings job se preskoči (nije fail). */
+  bigtehnDrawingsDir: optStr('BIGTEHN_DRAWINGS_DIR', ''),
 });
 
 export function describeConfig() {

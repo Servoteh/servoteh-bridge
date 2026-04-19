@@ -26,6 +26,7 @@
     "sync:approvals": "node src/index.js --job=approvals --once",
     "sync:part-movements": "node src/index.js --job=part_movements --once",
     "sync:tech-routing": "node src/index.js --job=tech_routing --once",
+    "sync:drawings": "node src/index.js --job=bigtehn_drawings --once",
     "sync:production": "node src/index.js --job=production --once",
     "service:install": "node src/service/install.js",
     "service:uninstall": "node src/service/uninstall.js",
