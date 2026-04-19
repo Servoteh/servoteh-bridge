@@ -14,10 +14,12 @@
     "sync:machines": "node src/index.js --job=machines --once",
     "sync:customers": "node src/index.js --job=customers --once",
     "sync:workers": "node src/index.js --job=workers --once",
+    "sync:locations": "node src/index.js --job=locations --once",
     "sync:catalogs": "node src/index.js --job=catalogs --once",
     "service:install": "node src/service/install.js",
     "service:uninstall": "node src/service/uninstall.js",
-    "test:connection": "node src/cli/testConnection.js"
+    "test:connection": "node src/cli/testConnection.js",
+    "discover:columns": "node src/cli/discoverColumns.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
