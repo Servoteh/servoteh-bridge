@@ -55,6 +55,11 @@ export const config = Object.freeze({
     dir: optStr('LOG_DIR', 'logs'),
     pretty: optBool('LOG_PRETTY', false),
   }),
+  alerts: Object.freeze({
+    telegramBotToken: optStr('ALERT_TELEGRAM_BOT_TOKEN', ''),
+    telegramChatId: optStr('ALERT_TELEGRAM_CHAT_ID', ''),
+    webhookUrl: optStr('ALERT_WEBHOOK_URL', ''),
+  }),
   instanceName: optStr('BRIDGE_INSTANCE_NAME', 'servoteh-bridge'),
 });
 

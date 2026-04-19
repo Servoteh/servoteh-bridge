@@ -189,47 +189,104 @@ npm start
 
 ---
 
-## Production deployment (Windows Service)
+## Production deployment (Windows Service) — checklist
 
 > Pretpostavlja se Windows Server (ili Windows 10/11 Pro) gde je BigTehn SQL Server. Bridge mora biti na istoj LAN-u (ili mašini).
+>
+> Ovaj checklist je **idempotentan** — možeš ga pokrenuti više puta bez štete. Svaki korak ima jasan kriterijum uspeha.
 
-### 1. Pripremi mašinu
+### Korak 1 — Preduslovi na serveru
 
 ```powershell
-# Provera Node-a (treba 20+)
-node --version
+# Node.js 20+ (LTS preporuka 20 ili 22)
+node --version    # >= v20.0.0
 
-# Ako Node nije instaliran:
-# https://nodejs.org/en/download/  (LTS — 20 ili 22)
+# Git
+git --version
+
+# PowerShell mora biti Administrator za Korak 5 (servis install)
 ```
 
-### 2. Klon + install + .env
+Ako Node nije instaliran: <https://nodejs.org/en/download/>
+
+### Korak 2 — Supabase migracije (jednom, sa lokalnog kompa ili u browseru)
+
+U Supabase SQL Editor, **redom**:
+1. `sql/migrations/001_bridge_catalogs_phase1b.sql`
+2. `sql/migrations/002_bridge_b1_micro_catalogs.sql`
+3. `sql/migrations/003_bridge_b21_items.sql`
+4. `sql/migrations/004_bridge_b22_production.sql`
+5. `sql/migrations/005_bridge_b23_part_movements.sql`
+
+Provera: `SELECT count(*) FROM bridge_sync_log;` mora vratiti `0` (ili više ako si već runovao Bridge).
+
+### Korak 3 — GRANT na BigTehn (jednom, u SSMS na SQL Server-u kao admin)
+
+```sql
+USE QBigTehn;
+GRANT SELECT ON dbo.tRadneJedinice         TO bridge_reader;
+GRANT SELECT ON dbo.tOperacije             TO bridge_reader;
+GRANT SELECT ON dbo.Komitenti              TO bridge_reader;
+GRANT SELECT ON dbo.tRadnici               TO bridge_reader;
+GRANT SELECT ON dbo.tVrsteRadnika          TO bridge_reader;
+GRANT SELECT ON dbo.tVrsteKvalitetaDelova  TO bridge_reader;
+GRANT SELECT ON dbo.tPozicije              TO bridge_reader;
+GRANT SELECT ON dbo.Predmeti               TO bridge_reader;
+GRANT SELECT ON dbo.tRN                    TO bridge_reader;
+GRANT SELECT ON dbo.tStavkeRN              TO bridge_reader;
+GRANT SELECT ON dbo.tLansiranRN            TO bridge_reader;
+GRANT SELECT ON dbo.tSaglasanRN            TO bridge_reader;
+GRANT SELECT ON dbo.tLokacijeDelova        TO bridge_reader;
+```
+
+### Korak 4 — Klon + install + `.env`
 
 ```powershell
+# Folder po standardu Servoteh deploymenata:
+mkdir C:\Servoteh -ErrorAction SilentlyContinue
 cd C:\Servoteh
+
+# Klon (ako vec postoji folder — `cd servoteh-bridge; git pull`)
 git clone https://github.com/Servoteh/servoteh-bridge.git
 cd servoteh-bridge
-copy .env.example .env
+
+# .env iz template-a (NE komitovati!)
+if (-not (Test-Path .env)) { copy .env.example .env }
 notepad .env
-# Popuni: BIGTEHN_SQL_*, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+# Obavezno popuni:
+#   BIGTEHN_SQL_*  (server, port, user, password)
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+#   BRIDGE_INSTANCE_NAME=servoteh-bridge-prod
+#   LOG_PRETTY=false   (na produkciji)
+# Opciono (ali preporuka):
+#   ALERT_TELEGRAM_BOT_TOKEN, ALERT_TELEGRAM_CHAT_ID  (vidi sekciju "Alerting")
+
+# Install (bez dev dependencies)
 npm install --omit=dev
 ```
 
-### 3. Test konekcije pre instalacije servisa
+### Korak 5 — Smoke test (PRE servis install-a!)
 
 ```powershell
+# 1. Konekcija ka SQL Server-u i Supabase-u
 npm run test:connection
-# Treba videti dva ✓ reda. Ako padne, NE INSTALIRATI servis.
+# Mora videti 2 zelena reda. Ako padne — fix .env i grants pre nastavka.
+
+# 2. Sva 8 kataloga
+npm run sync:catalogs
+# Mora završiti bez greške, videti "all 8 catalogs done" + brojeve.
+
+# 3. Svih 5 production jobova
+npm run sync:production
+# Mora završiti bez greške, videti breakdown po 5 sub-jobs-a.
+
+# Provera u Supabase Table Editor:
+#   bigtehn_workers_cache (>50 redova)
+#   bigtehn_work_orders_cache (>0 redova)
+#   bridge_sync_log (svi runs status='success')
 ```
 
-### 4. Test jednog joba
-
-```powershell
-npm run sync:departments
-# Provera u Supabase Table Editor: bigtehn_departments_cache treba da ima redove.
-```
-
-### 5. Instalacija kao Windows Service
+### Korak 6 — Instalacija kao Windows Service
 
 **WAŽNO: PowerShell mora biti pokrenut kao Administrator.**
 
@@ -237,37 +294,121 @@ npm run sync:departments
 npm run service:install
 ```
 
-Servis se zove `Servoteh Bridge`, auto-startuje na boot. Status: `services.msc`.
-
-### 6. Provera da radi
+Servis se zove `Servoteh Bridge`, auto-startuje na boot.
 
 ```powershell
-# Logovi
-Get-Content .\logs\bridge-$(Get-Date -Format yyyy-MM-dd).log -Tail 50 -Wait
+# Provera statusa
+Get-Service "Servoteh Bridge"   # mora biti Status: Running
 
-# Ručni run dok je servis aktivan (servis to neće blokirati — koristi isti folder ali drugi proces)
-npm run sync:catalogs
+# Ili kroz GUI: services.msc → "Servoteh Bridge"
 ```
 
-### 7. Update koda (kad Faza 1C dođe)
+### Korak 7 — Provera da scheduler radi
 
 ```powershell
-# Stop servisa
-Stop-Service "Servoteh Bridge"
+# Real-time tail logova (Ctrl+C za izlaz)
+Get-Content .\logs\bridge-$(Get-Date -Format yyyy-MM-dd).log -Tail 50 -Wait
 
+# U logovima moras videti:
+#   "scheduler] catalogs job registered"  (cron 0 6 * * *)
+#   "scheduler] production job registered" (cron */15 * * * *)
+
+# Sledeci 15-min tick (ako je 14:23 sad, sledeci ce biti u 14:30):
+#   "[scheduler] production_15min start" + 5 sub-job log redova
+```
+
+### Korak 8 — Log rotacija (jednom, kao Administrator)
+
+Brisanje logova starijih od 30 dana, svaki dan u 03:00:
+
+```powershell
+Register-ScheduledTask `
+  -TaskName "Servoteh Bridge - rotate logs" `
+  -Action (New-ScheduledTaskAction `
+             -Execute "powershell.exe" `
+             -Argument "-NoProfile -ExecutionPolicy Bypass -File C:\Servoteh\servoteh-bridge\scripts\rotate-logs.ps1") `
+  -Trigger (New-ScheduledTaskTrigger -Daily -At 3am) `
+  -User "SYSTEM" `
+  -RunLevel Highest
+
+# Test (rucno):
+Start-ScheduledTask "Servoteh Bridge - rotate logs"
+```
+
+### Korak 9 — Verifikacija u Supabase (10 minuta posle service install-a)
+
+```sql
+-- Skoro proizvedeni runs (treba bar 1 production_15min uspesan)
+SELECT sync_job, status, started_at, duration_ms, rows_updated
+FROM bridge_sync_log
+ORDER BY started_at DESC
+LIMIT 20;
+```
+
+Ako su svi `status='success'` i `production_15min` se ponavlja na svakih 15 min → **deploy je uspesan**.
+
+### Update koda (kad nove faze stignu)
+
+```powershell
+Stop-Service "Servoteh Bridge"
 cd C:\Servoteh\servoteh-bridge
 git pull
 npm install --omit=dev
-
-# Start servisa
+# Pokreni nove SQL migracije ako ih ima (vidi commit log za xxx_bridge_*.sql)
 Start-Service "Servoteh Bridge"
 ```
 
-### 8. Uninstall
+### Uninstall (ako treba premestiti na drugi server)
 
 ```powershell
+Stop-Service "Servoteh Bridge"
 npm run service:uninstall
+Unregister-ScheduledTask "Servoteh Bridge - rotate logs" -Confirm:$false
 ```
+
+---
+
+## Alerting (Telegram + generic webhook)
+
+Bridge može da te obavesti odmah kad neki sync padne. Kanali su opcioni — ako su prazni, nema poruka.
+
+### Telegram (preporuka — najlakše setupovati)
+
+1. Otvori [@BotFather](https://t.me/BotFather) u Telegramu, pošalji `/newbot`, kopiraj **TOKEN** (npr. `7123456789:AAH...`).
+2. Kreiraj **grupu** "Servoteh Bridge alerts" (ili koristi private chat sa botom). Dodaj bota u grupu.
+3. Pošalji bilo koju poruku u chat (da bot može da je vidi). Onda otvori u browseru:
+   ```
+   https://api.telegram.org/bot<TOKEN>/getUpdates
+   ```
+   Kopiraj `chat.id` (npr. `123456789` za 1-na-1 ili `-1001234567890` za grupu).
+4. U `.env`:
+   ```env
+   ALERT_TELEGRAM_BOT_TOKEN=7123456789:AAH...
+   ALERT_TELEGRAM_CHAT_ID=-1001234567890
+   ```
+5. Restart service: `Restart-Service "Servoteh Bridge"`.
+
+Test (forsiraj grešku da vidiš poruku):
+```powershell
+# Privremeno postavi pogresan SQL user u .env i pokreni:
+npm run sync:departments
+# Telegram chat treba da dobije "🚨 Servoteh Bridge — sync greška".
+# NE ZABORAVI vratiti pravi user u .env!
+```
+
+### Generic webhook (Slack / Discord / Teams / Mattermost)
+
+```env
+ALERT_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../...
+# ili Discord:
+# ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/<id>/<token>
+```
+
+Bridge POST-uje JSON sa `text`, `content`, `level`, `job`, `error_message`, `stack`. Slack i Mattermost čitaju `text`, Discord čita `content`.
+
+### Throttling
+
+Notifier ima ugrađen rate limit od **1h po istom job-u**. Znači: ako `production_work_orders` pukne svakih 15 min, dobijaš 1 poruku po satu, ne 4. To sprečava spam — i dalje vidiš puni audit u `bridge_sync_log`.
 
 ---
 
@@ -297,11 +438,14 @@ npm run service:uninstall
 - Najčešće: `.env` fajl nedostupan. node-windows servis NE čita `.env` automatski sa workingDirectory u svim slučajevima — alternativa je staviti env vars u **System Environment Variables** (`Edit the system environment variables` → Environment Variables → System variables).
 
 ### Logovi previše rastu
-- Trenutna verzija pravi 1 fajl po danu (`bridge-YYYY-MM-DD.log`). Stari fajlovi se ne brišu automatski.
-- Preporuka: PowerShell scheduled task koji briše logove starije od 30 dana:
-  ```powershell
-  Get-ChildItem .\logs\bridge-*.log | Where-Object LastWriteTime -lt (Get-Date).AddDays(-30) | Remove-Item
-  ```
+- Trenutna verzija pravi 1 fajl po danu (`bridge-YYYY-MM-DD.log`). Setup automatske rotacije je u sekciji "Production deployment → Korak 8" (PowerShell scheduled task koji svaki dan u 03:00 pokreće `scripts/rotate-logs.ps1` i briše fajlove starije od 30 dana).
+- Manuelni run: `.\scripts\rotate-logs.ps1` ili sa custom RetentionDays: `.\scripts\rotate-logs.ps1 -RetentionDays 14`.
+
+### Telegram alert ne stiže iako je `.env` popunjen
+- Provera u logu: traži `alert channels active` na startup-u. Ako vidiš `no alert channels configured`, env vars nisu pročitani — restart service.
+- Provera tokena: otvori `https://api.telegram.org/bot<TOKEN>/getMe` u browseru. Mora vratiti JSON sa `"ok":true`. Ako ne, token je pogrešan.
+- Provera `chat_id`: pošalji testnu poruku botu u tom chat-u, pa otvori `https://api.telegram.org/bot<TOKEN>/getUpdates`. `result[0].message.chat.id` je tvoj `chat_id`. **Grupe imaju negativne ID-eve** (npr. `-1001234567890`) — uključi minus znak.
+- Ako bot je u grupi sa "privacy mode" ON, neće videti poruke. Setup: `/setprivacy` u BotFather-u → izaberi bota → Disable.
 
 ---
 

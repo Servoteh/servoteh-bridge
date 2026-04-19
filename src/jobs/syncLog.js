@@ -1,3 +1,4 @@
+import { notifyError } from '../alerts/notifier.js';
 import { getSupabase } from '../db/supabase.js';
 import { logger } from '../logger.js';
 
@@ -74,6 +75,11 @@ export async function failRun(run, error) {
   const finishedAt = new Date();
   const durationMs = finishedAt.getTime() - run.startedAt.getTime();
   const message = error?.message ? String(error.message).slice(0, 4000) : String(error);
+
+  // Fire-and-forget alert. notifyError je throttle-ovan po jobName (1h),
+  // pa neće spamovati ako isti job pukne svakih 15 min.
+  notifyError({ jobName: run.syncJob, error, run });
+
   if (run.id == null) {
     logger.error(
       { syncJob: run.syncJob, durationMs, err: error },
