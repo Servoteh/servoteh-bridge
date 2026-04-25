@@ -180,6 +180,16 @@ npm run sync:tech-routing
 # ili svih 6 odjednom:
 npm run sync:production
 
+# 4b) Backfill Planiranja proizvodnje (puno skeniranje po ID, bez 30d prozora):
+#  - tRN, tStavkeRN, tTehPostupak -> cache tabele
+#  - tTehPostupak (kvalitet 1/2) -> bigtehn_rework_scrap_cache (G4)
+#  - posle sync-a `tech` poziva Supabase RPC mark_in_progress_from_tech_routing (G6)
+# Preduslov: u Supabase primenjene migracije iz servoteh-plan-montaze
+# (add_production_g4_rework_scrap_cache.sql, add_production_g6_auto_in_progress.sql).
+npm run backfill:production:dry
+npm run backfill:production
+# Ili samo G4: node scripts/backfill-production-cache.js --tables=rework-scrap --scope=open
+
 # (debug) — otkrij stvarne kolone neke BigTehn tabele:
 npm run discover:columns -- tVrsteKvalitetaDelova
 npm run discover:columns -- tRN

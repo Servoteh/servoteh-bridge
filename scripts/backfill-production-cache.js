@@ -1,19 +1,24 @@
 /**
- * Manual backfill za Planiranje proizvodnje.
+ * Manual backfill za modul Planiranje proizvodnje.
  *
  * Puni Supabase cache bez vremenskog prozora:
- *   dbo.tRN          -> public.bigtehn_work_orders_cache
- *   dbo.tStavkeRN    -> public.bigtehn_work_order_lines_cache
- *   dbo.tTehPostupak -> public.bigtehn_tech_routing_cache
+ *   dbo.tRN            -> public.bigtehn_work_orders_cache
+ *   dbo.tStavkeRN      -> public.bigtehn_work_order_lines_cache
+ *   dbo.tTehPostupak   -> public.bigtehn_tech_routing_cache
+ *   dbo.tTehPostupak   -> public.bigtehn_rework_scrap_cache (G4, kvalitet 1/2)
+ *
+ * Posle uspešnog sync-a `tech` (ako je u listi tabela) poziva Supabase RPC
+ * `mark_in_progress_from_tech_routing` (G6) — vidi `servoteh-plan-montaze` SQL migracije.
  *
  * Default je --scope=open: svi nezavršeni RN-ovi, bez "poslednjih 30 dana".
+ * Env: BIGTEHN_SQL_* (kako u .env.example) sa fallback-om na MSSQL_*.
  */
 
 import 'dotenv/config';
 import sql from 'mssql';
 import { createClient } from '@supabase/supabase-js';
 
-const TABLE_ORDER = ['work-orders', 'lines', 'tech'];
+const TABLE_ORDER = ['work-orders', 'lines', 'tech', 'rework-scrap'];
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 
 function log(level, msg, extra) {
@@ -62,7 +67,11 @@ function parseArgs(argv) {
     } else if (a.startsWith('--tables=')) {
       const tables = a.slice('--tables='.length).split(',').map(s => s.trim()).filter(Boolean);
       const bad = tables.filter(t => !TABLE_ORDER.includes(t));
-      if (bad.length) throw new Error(`Invalid --tables value(s): ${bad.join(', ')}`);
+      if (bad.length) {
+        throw new Error(
+          `Invalid --tables value(s): ${bad.join(', ')}; expected ${TABLE_ORDER.join(',')}`,
+        );
+      }
       out.tables = TABLE_ORDER.filter(t => tables.includes(t));
     } else if (a.startsWith('--batch=')) {
       const n = Number.parseInt(a.slice('--batch='.length), 10);
@@ -80,19 +89,21 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  process.stdout.write([
-    'Usage: node scripts/backfill-production-cache.js [options]',
-    '',
-    'Options:',
-    '  --scope=open       (default) svi nezavršeni RN-ovi, bez date filtera',
-    '  --scope=all        cela istorija, bez status/date filtera',
-    '  --tables=a,b       work-orders,lines,tech (default: all three)',
-    '  --batch=500        veličina batch-a za select/upsert',
-    '  --limit=N          test limit po tabeli',
-    '  --dry-run          čita i broji, ne piše u Supabase',
-    '  -h, --help         prikaži help',
-    '',
-  ].join('\n'));
+  process.stdout.write(
+    [
+      'Usage: node scripts/backfill-production-cache.js [options]',
+      '',
+      'Options:',
+      '  --scope=open       (default) svi nezavršeni RN-ovi, bez date filtera',
+      '  --scope=all        cela istorija, bez status/date filtera',
+      '  --tables=a,b       work-orders,lines,tech,rework-scrap (default: sve četiri)',
+      '  --batch=500        veličina batch-a za select/upsert',
+      '  --limit=N          test limit po tabeli',
+      '  --dry-run          čita i broji, ne piše u Supabase',
+      '  -h, --help         prikaži help',
+      '',
+    ].join('\n'),
+  );
 }
 
 const iso = v => (v instanceof Date ? v.toISOString() : v == null ? null : String(v));
@@ -174,20 +185,58 @@ function mapTechRow(r) {
   };
 }
 
+function mapReworkScrapRow(r) {
+  return {
+    id: Number(r.IDPostupka),
+    work_order_id: nullableNum(r.IDRN),
+    item_id: nullableNum(r.IDPredmet),
+    ident_broj: textOrNull(r.IdentBroj),
+    varijanta: numOr(r.Varijanta),
+    operacija: numOr(r.Operacija),
+    machine_code: textOrNull(r.RJgrupaRC),
+    worker_id: nullableNum(r.SifraRadnika),
+    quality_type_id: nullableNum(r.IDVrstaKvaliteta),
+    pieces: numOr(r.Komada),
+    prn_timer_seconds: nullableNum(r.PrnTimer),
+    started_at: iso(r.DatumIVremeUnosa),
+    finished_at: iso(r.DatumIVremeZavrsetka),
+    is_completed: boolOr(r.ZavrsenPostupak),
+    dorada_operacije: numOr(r.DoradaOperacije),
+    napomena: textOrNull(r.Napomena),
+    synced_at: new Date().toISOString(),
+  };
+}
+
 const SOURCES = {
   'work-orders': {
     target: 'bigtehn_work_orders_cache',
     idCol: 'IDRN',
     from: 'dbo.tRN src',
     selectCols: [
-      'src.IDRN', 'src.IDPredmet', 'src.BBIDKomitent', 'src.IdentBroj',
-      'src.Varijanta', 'src.BrojCrteza', 'src.NazivDela', 'src.Materijal',
-      'src.DimenzijaMaterijala', 'src.JM', 'src.Komada',
-      'src.TezinaNeobrDela', 'src.TezinaObrDela', 'src.StatusRN',
-      'src.Zakljucano', 'src.Revizija', 'src.IDVrstaKvaliteta',
-      'src.IDStatusPrimopredaje', 'CAST(src.Napomena AS NVARCHAR(MAX)) AS Napomena',
-      'src.RokIzrade', 'src.DatumUnosa', 'src.DIVUnosaRN',
-      'src.DIVIspravkeRN', 'src.SifraRadnika',
+      'src.IDRN',
+      'src.IDPredmet',
+      'src.BBIDKomitent',
+      'src.IdentBroj',
+      'src.Varijanta',
+      'src.BrojCrteza',
+      'src.NazivDela',
+      'src.Materijal',
+      'src.DimenzijaMaterijala',
+      'src.JM',
+      'src.Komada',
+      'src.TezinaNeobrDela',
+      'src.TezinaObrDela',
+      'src.StatusRN',
+      'src.Zakljucano',
+      'src.Revizija',
+      'src.IDVrstaKvaliteta',
+      'src.IDStatusPrimopredaje',
+      'CAST(src.Napomena AS NVARCHAR(MAX)) AS Napomena',
+      'src.RokIzrade',
+      'src.DatumUnosa',
+      'src.DIVUnosaRN',
+      'src.DIVIspravkeRN',
+      'src.SifraRadnika',
     ],
     openWhere: 'ISNULL(src.StatusRN, 0) = 0',
     map: mapWorkOrderRow,
@@ -197,10 +246,19 @@ const SOURCES = {
     idCol: 'IDStavkeRN',
     from: 'dbo.tStavkeRN src',
     selectCols: [
-      'src.IDStavkeRN', 'src.IDRN', 'src.Operacija', 'src.RJgrupaRC',
-      'CAST(src.OpisRada AS NVARCHAR(MAX)) AS OpisRada', 'src.AlatPribor',
-      'src.Tpz', 'src.Tk', 'src.TezinaTO', 'src.SifraRadnika',
-      'src.DIVUnosa', 'src.DIVIspravke', 'src.Prioritet',
+      'src.IDStavkeRN',
+      'src.IDRN',
+      'src.Operacija',
+      'src.RJgrupaRC',
+      'CAST(src.OpisRada AS NVARCHAR(MAX)) AS OpisRada',
+      'src.AlatPribor',
+      'src.Tpz',
+      'src.Tk',
+      'src.TezinaTO',
+      'src.SifraRadnika',
+      'src.DIVUnosa',
+      'src.DIVIspravke',
+      'src.Prioritet',
     ],
     joinForOpen: 'INNER JOIN dbo.tRN rn ON rn.IDRN = src.IDRN',
     openWhere: 'ISNULL(rn.StatusRN, 0) = 0',
@@ -211,16 +269,55 @@ const SOURCES = {
     idCol: 'IDPostupka',
     from: 'dbo.tTehPostupak src',
     selectCols: [
-      'src.IDPostupka', 'src.SifraRadnika', 'src.IDPredmet', 'src.IdentBroj',
-      'src.Varijanta', 'src.PrnTimer', 'src.DatumIVremeUnosa', 'src.Operacija',
-      'src.RJgrupaRC', 'src.Toznaka', 'src.Komada', 'src.Potpis',
-      'src.DatumIVremeZavrsetka', 'src.ZavrsenPostupak',
-      'CAST(src.Napomena AS NVARCHAR(MAX)) AS Napomena', 'src.IDRN',
-      'src.IDVrstaKvaliteta', 'src.DoradaOperacije',
+      'src.IDPostupka',
+      'src.SifraRadnika',
+      'src.IDPredmet',
+      'src.IdentBroj',
+      'src.Varijanta',
+      'src.PrnTimer',
+      'src.DatumIVremeUnosa',
+      'src.Operacija',
+      'src.RJgrupaRC',
+      'src.Toznaka',
+      'src.Komada',
+      'src.Potpis',
+      'src.DatumIVremeZavrsetka',
+      'src.ZavrsenPostupak',
+      'CAST(src.Napomena AS NVARCHAR(MAX)) AS Napomena',
+      'src.IDRN',
+      'src.IDVrstaKvaliteta',
+      'src.DoradaOperacije',
     ],
     joinForOpen: 'INNER JOIN dbo.tRN rn ON rn.IDRN = src.IDRN',
     openWhere: 'ISNULL(rn.StatusRN, 0) = 0',
     map: mapTechRow,
+  },
+  'rework-scrap': {
+    target: 'bigtehn_rework_scrap_cache',
+    idCol: 'IDPostupka',
+    from: 'dbo.tTehPostupak src',
+    selectCols: [
+      'src.IDPostupka',
+      'src.SifraRadnika',
+      'src.IDPredmet',
+      'src.IdentBroj',
+      'src.Varijanta',
+      'src.PrnTimer',
+      'src.DatumIVremeUnosa',
+      'src.Operacija',
+      'src.RJgrupaRC',
+      'src.Komada',
+      'src.DatumIVremeZavrsetka',
+      'src.ZavrsenPostupak',
+      'CAST(src.Napomena AS NVARCHAR(MAX)) AS Napomena',
+      'src.IDRN',
+      'src.IDVrstaKvaliteta',
+      'src.DoradaOperacije',
+    ],
+    joinForOpen: 'INNER JOIN dbo.tRN rn ON rn.IDRN = src.IDRN',
+    openWhere: 'ISNULL(rn.StatusRN, 0) = 0 AND src.IDVrstaKvaliteta IN (1, 2)',
+    extraWhere: 'src.IDVrstaKvaliteta IN (1, 2)',
+    map: mapReworkScrapRow,
   },
 };
 
@@ -256,19 +353,27 @@ async function createMssqlPool() {
 }
 
 function fromClause(src, scope) {
-  return scope === 'open' && src.joinForOpen ? `${src.from} ${src.joinForOpen}` : src.from;
+  if (scope === 'open' && src.joinForOpen) {
+    return `${src.from} ${src.joinForOpen}`;
+  }
+  return src.from;
 }
 
 function whereClause(src, scope) {
   const parts = [`src.${src.idCol} > @LastId`];
   if (scope === 'open' && src.openWhere) parts.push(src.openWhere);
+  else if (src.extraWhere) parts.push(src.extraWhere);
   return parts.join(' AND ');
 }
 
 async function countRows(pool, src, scope) {
   const req = pool.request();
   req.input('LastId', sql.Int, 0);
-  const q = `SELECT COUNT(*) AS n FROM ${fromClause(src, scope)} WHERE ${whereClause(src, scope)}`;
+  const q = `
+    SELECT COUNT(*) AS n
+    FROM ${fromClause(src, scope)}
+    WHERE ${whereClause(src, scope)}
+  `;
   const res = await req.query(q);
   return Number(res.recordset?.[0]?.n ?? 0);
 }
@@ -338,6 +443,20 @@ async function syncOneTable(pool, sb, tableKey, args) {
   return { table: tableKey, seen, upserted };
 }
 
+async function runPostProductionSyncRpc(sb, args) {
+  if (args.dryRun) return null;
+  if (!args.tables.includes('tech')) return null;
+
+  log('info', 'post-sync rpc starting', { rpc: 'mark_in_progress_from_tech_routing' });
+  const { data, error } = await sb.rpc('mark_in_progress_from_tech_routing');
+  if (error) throw new Error(`mark_in_progress_from_tech_routing failed: ${error.message}`);
+  log('info', 'post-sync rpc complete', {
+    rpc: 'mark_in_progress_from_tech_routing',
+    result: data,
+  });
+  return data;
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   if (args.help) {
@@ -360,7 +479,8 @@ async function main() {
     for (const tableKey of args.tables) {
       results.push(await syncOneTable(pool, sb, tableKey, args));
     }
-    log('info', 'production backfill complete', { results, dry_run: args.dryRun });
+    const postSync = await runPostProductionSyncRpc(sb, args);
+    log('info', 'production backfill complete', { results, post_sync: postSync, dry_run: args.dryRun });
   } finally {
     await pool.close();
   }
