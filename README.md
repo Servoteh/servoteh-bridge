@@ -480,3 +480,18 @@ Notifier ima ugrađen rate limit od **1h po istom job-u**. Znači: ako `producti
 - **1E** — write-back (lansiran/saglasan/tehpostupak/StatusRN)
 
 Plan: `BIGTEHN_DATA_MAP.md`, sekcija 8 (uz korekciju za sekciju 5/3.1 koja je netačno opisivala `tLokacijeDelova`).
+
+---
+
+## SCADA relay (Energetika) — 2026-07
+
+Bridge od 2026-07 ima i **SCADA relay** za nadzor/upravljanje kotlarnicama i
+solarima: čita lokalni HTTP API SCADA aplikacije (`scada-app/`, ista mašina) i
+upisuje `scada_snapshots` / `scada_history` / `scada_alarms` u Supabase +
+izvršava `scada_commands` (allowlist + rate-limit + audit).
+
+- Kod: `src/scada/*` (client, normalize, allowlist, loop) + `src/jobs/scadaSnapshot.js`, `src/jobs/scadaCommands.js`
+- Uključivanje: `SCADA_ENABLED=true` u `.env` (vidi `.env.example`, SCADA sekcija)
+- Per-mašina profil: `ENABLE_JOB_CATALOGS` / `ENABLE_JOB_PRODUCTION` (BigTehn server: true/true; SCADA VM: false/false + `SCADA_ENABLED=true`)
+- One-shot testovi: `npm run sync:scada`, `npm run sync:scada-commands`
+- Kompletno uputstvo: `docs/scada/bridge-scada-install.md` (repo root)

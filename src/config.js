@@ -26,13 +26,27 @@ function optBool(name, fallback) {
   return /^(1|true|yes|on)$/i.test(String(v).trim());
 }
 
+/* Enable/disable grupa jobova po instanci. BigTehn mašina: sve true, SCADA
+   false. SCADA (Win2019 VM u kotlarnici): ENABLE_JOB_CATALOGS=false,
+   ENABLE_JOB_PRODUCTION=false, SCADA_ENABLED=true — ista codebase, dva .env-a. */
+const jobsFlags = Object.freeze({
+  catalogs: optBool('ENABLE_JOB_CATALOGS', true),
+  production: optBool('ENABLE_JOB_PRODUCTION', true),
+});
+
+/* BigTehn SQL varijable su obavezne samo ako je bar jedan BigTehn job aktivan —
+   na SCADA mašini nema SQL Servera pa ne smeju da obaraju startup. */
+const bigtehnNeeded = jobsFlags.catalogs || jobsFlags.production;
+const bigtehnStr = (name) => (bigtehnNeeded ? reqStr(name) : optStr(name, ''));
+
 export const config = Object.freeze({
+  jobs: jobsFlags,
   bigtehn: Object.freeze({
-    server: reqStr('BIGTEHN_SQL_SERVER'),
+    server: bigtehnStr('BIGTEHN_SQL_SERVER'),
     port: optInt('BIGTEHN_SQL_PORT', 1433),
-    database: reqStr('BIGTEHN_SQL_DATABASE'),
-    user: reqStr('BIGTEHN_SQL_USER'),
-    password: reqStr('BIGTEHN_SQL_PASSWORD'),
+    database: bigtehnStr('BIGTEHN_SQL_DATABASE'),
+    user: bigtehnStr('BIGTEHN_SQL_USER'),
+    password: bigtehnStr('BIGTEHN_SQL_PASSWORD'),
     encrypt: optBool('BIGTEHN_SQL_ENCRYPT', false),
     trustServerCertificate: optBool('BIGTEHN_SQL_TRUST_SERVER_CERTIFICATE', true),
     requestTimeout: optInt('BIGTEHN_SQL_REQUEST_TIMEOUT_MS', 60_000),
@@ -67,6 +81,21 @@ export const config = Object.freeze({
   /* F.5a: Folder na BigBit serveru sa PDF crtežima (npr. C:\PDMExport\PDFImportovano).
      Ako je prazno, syncBigtehnDrawings job se preskoči (nije fail). */
   bigtehnDrawingsDir: optStr('BIGTEHN_DRAWINGS_DIR', ''),
+  /* SCADA relay — čita lokalni HTTP API Scada_PLC aplikacije (ista mašina) i
+     upisuje snapshot/istoriju/alarme u Supabase + izvršava scada_commands.
+     Dizajn: docs/scada/energetika-scada-integration.md (repo plan-montaze). */
+  scada: Object.freeze({
+    enabled: optBool('SCADA_ENABLED', false),
+    baseUrl: optStr('SCADA_BASE_URL', 'http://127.0.0.1:3000').replace(/\/+$/, ''),
+    snapshotMs: Math.max(2_000, optInt('SCADA_SNAPSHOT_MS', 5_000)),
+    historyMs: Math.max(15_000, optInt('SCADA_HISTORY_MS', 60_000)),
+    cmdPollMs: Math.max(1_000, optInt('SCADA_CMD_POLL_MS', 2_000)),
+    httpTimeoutMs: optInt('SCADA_HTTP_TIMEOUT_MS', 8_000),
+    /* kill-switch: false trenutno zaustavlja IZVRŠAVANJE komandi (nadzor radi dalje) */
+    control: optBool('SCADA_CONTROL', true),
+    cmdRatePerMin: optInt('SCADA_CMD_RATE_PER_MIN', 10),
+    historyRetentionDays: optInt('SCADA_HISTORY_RETENTION_DAYS', 90),
+  }),
 });
 
 export function describeConfig() {

@@ -5,6 +5,7 @@ import { syncBigtehnDrawings } from './jobs/syncBigtehnDrawings.js';
 import { syncCatalogs } from './jobs/syncCatalogs.js';
 import { syncProduction } from './jobs/syncProduction.js';
 import { logger } from './logger.js';
+import { startScadaLoops } from './scada/loop.js';
 
 let _registered = false;
 let _runningCatalogs = false;
@@ -79,28 +80,35 @@ export function startScheduler() {
     return;
   }
 
-  if (!cron.validate(config.scheduler.catalogsCron)) {
-    throw new Error(`[scheduler] Invalid catalogs cron expression: ${config.scheduler.catalogsCron}`);
-  }
-  if (!cron.validate(config.scheduler.productionCron)) {
-    throw new Error(`[scheduler] Invalid production cron expression: ${config.scheduler.productionCron}`);
+  if (config.jobs.catalogs) {
+    if (!cron.validate(config.scheduler.catalogsCron)) {
+      throw new Error(`[scheduler] Invalid catalogs cron expression: ${config.scheduler.catalogsCron}`);
+    }
+    cron.schedule(config.scheduler.catalogsCron, safeCatalogs, {
+      timezone: config.scheduler.timezone,
+    });
+    logger.info(
+      { cron: config.scheduler.catalogsCron, tz: config.scheduler.timezone },
+      '[scheduler] catalogs job registered',
+    );
+  } else {
+    logger.info('[scheduler] catalogs job disabled via ENABLE_JOB_CATALOGS=false');
   }
 
-  cron.schedule(config.scheduler.catalogsCron, safeCatalogs, {
-    timezone: config.scheduler.timezone,
-  });
-  logger.info(
-    { cron: config.scheduler.catalogsCron, tz: config.scheduler.timezone },
-    '[scheduler] catalogs job registered',
-  );
-
-  cron.schedule(config.scheduler.productionCron, safeProduction, {
-    timezone: config.scheduler.timezone,
-  });
-  logger.info(
-    { cron: config.scheduler.productionCron, tz: config.scheduler.timezone },
-    '[scheduler] production job registered',
-  );
+  if (config.jobs.production) {
+    if (!cron.validate(config.scheduler.productionCron)) {
+      throw new Error(`[scheduler] Invalid production cron expression: ${config.scheduler.productionCron}`);
+    }
+    cron.schedule(config.scheduler.productionCron, safeProduction, {
+      timezone: config.scheduler.timezone,
+    });
+    logger.info(
+      { cron: config.scheduler.productionCron, tz: config.scheduler.timezone },
+      '[scheduler] production job registered',
+    );
+  } else {
+    logger.info('[scheduler] production job disabled via ENABLE_JOB_PRODUCTION=false');
+  }
 
   /* F.5a: BigTehn crteži (samo ako je BIGTEHN_DRAWINGS_DIR podešena) */
   if (config.bigtehnDrawingsDir) {
@@ -116,6 +124,13 @@ export function startScheduler() {
     );
   } else {
     logger.info('[scheduler] BIGTEHN_DRAWINGS_DIR nije postavljena — drawings job se preskače');
+  }
+
+  /* SCADA relay (Energetika) — sekundne petlje van cron-a, samo ako je uključen */
+  if (config.scada.enabled) {
+    startScadaLoops();
+  } else {
+    logger.info('[scheduler] SCADA_ENABLED nije uključen — scada petlje se preskaču');
   }
 
   _registered = true;

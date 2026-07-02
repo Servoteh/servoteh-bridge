@@ -18,6 +18,8 @@ import { syncWorkOrderLines } from './jobs/syncWorkOrderLines.js';
 import { syncWorkOrders } from './jobs/syncWorkOrders.js';
 import { syncWorkers } from './jobs/syncWorkers.js';
 import { syncWorkerTypes } from './jobs/syncWorkerTypes.js';
+import { scadaCommandsOnce } from './jobs/scadaCommands.js';
+import { scadaSnapshotOnce } from './jobs/scadaSnapshot.js';
 import { logger } from './logger.js';
 import { startScheduler } from './scheduler.js';
 
@@ -97,6 +99,15 @@ async function runOne(jobName) {
       return;
     case 'production':
       await syncProduction();
+      return;
+    case 'scada':
+    case 'scada_snapshot':
+    case 'scada-snapshot':
+      await scadaSnapshotOnce({ withHistory: true, logRun: true });
+      return;
+    case 'scada_commands':
+    case 'scada-commands':
+      await scadaCommandsOnce();
       return;
     case 'catalogs':
     case null:
