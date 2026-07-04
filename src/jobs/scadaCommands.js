@@ -85,6 +85,12 @@ export async function scadaCommandsOnce() {
         body: mdSafe(`${cmd.site_key} > ${cmd.target} = ${JSON.stringify(cmd.value)} (${cmd.requested_by})`),
       });
     } catch (err) {
+      if (err?.reject) {
+        // validacija u exec fazi (npr. Loxone max po tagu) → rejected, ne failed
+        await setOutcome(supa, cmd.id, 'rejected', { error: String(err.message) });
+        log.warn({ ...ctx, reason: err.message }, 'komanda odbijena u exec validaciji');
+        continue;
+      }
       await setOutcome(supa, cmd.id, 'failed', { error: String(err?.message || err) });
       log.error({ ...ctx, err }, 'komanda neuspešna');
       notifyError({ jobName: 'scada_commands', error: err, context: `${cmd.site_key}/${cmd.target}` });

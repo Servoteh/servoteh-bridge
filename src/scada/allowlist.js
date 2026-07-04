@@ -1,10 +1,17 @@
 import {
+  getLoxone,
   writeLoxone,
   writeLoxoneRoomTemp,
   writeS7,
   writeSigen,
   writeUnitronics,
 } from './scadaClient.js';
+
+/** Greška validacije u exec fazi → komanda ide u 'rejected' (ne 'failed'). */
+class RejectError extends Error {
+  constructor(msg) { super(msg); this.reject = true; }
+}
+export { RejectError };
 
 /**
  * ALLOWLIST komandi — jedini autoritet šta sme da se piše iz clouda.
@@ -120,17 +127,31 @@ function validateKot3(target, value) {
     if (!key || n == null) return { ok: false, reason: 'roomtemp: key + vrednost 5–35 °C' };
     return { ok: true, exec: () => writeLoxoneRoomTemp(key, mode, n) };
   }
-  if (target.endsWith(':switch')) {
-    const key = target.slice(0, -':switch'.length);
-    const b = bool01(v);
-    if (!key || b == null) return { ok: false, reason: 'switch: vrednost mora 0/1' };
-    return { ok: true, exec: () => writeLoxone(key, b) };
-  }
-  if (target.endsWith(':value')) {
-    const key = target.slice(0, -':value'.length);
-    const n = numIn(v, 0, 1000); // grubi opseg; Loxone/app validira stvarni max
-    if (!key || n == null) return { ok: false, reason: 'value: broj 0–1000' };
-    return { ok: true, exec: () => writeLoxone(key, n) };
+  if (target.endsWith(':switch') || target.endsWith(':value')) {
+    const key = target.replace(/:(switch|value)$/, '');
+    const n = Number(v);
+    if (!key || !Number.isFinite(n)) return { ok: false, reason: 'value: mora broj' };
+    // stvarna validacija po TAGU iz živе strukture (nalaz N7): writable check,
+    // Switch → 0/1, ValueSelector → 0..max (max iz live stanja ako postoji)
+    return {
+      ok: true,
+      exec: async () => {
+        const snap = await getLoxone();
+        const tag = (snap?.tags || []).find((t) => t.key === key);
+        if (!tag) throw new RejectError(`Loxone tag '${key}' ne postoji`);
+        if (!tag.writable) throw new RejectError(`Loxone '${tag.name}' je read-only`);
+        if (tag.kind === 'switch') {
+          const b = bool01(v);
+          if (b == null) throw new RejectError(`${tag.name}: vrednost mora 0/1`);
+          return writeLoxone(key, b);
+        }
+        const live = snap?.live || {};
+        const mxRaw = tag.states?.max != null ? Number(live[tag.states.max]) : NaN;
+        const max = Number.isFinite(mxRaw) && mxRaw > 0 ? mxRaw : 100;
+        if (n < 0 || n > max) throw new RejectError(`${tag.name}: opseg 0–${max}`);
+        return writeLoxone(key, n);
+      },
+    };
   }
   return { ok: false, reason: `kot3: target '${target}' nije u allowlist-u` };
 }

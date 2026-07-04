@@ -88,7 +88,9 @@ export const config = Object.freeze({
     enabled: optBool('SCADA_ENABLED', false),
     baseUrl: optStr('SCADA_BASE_URL', 'http://127.0.0.1:3000').replace(/\/+$/, ''),
     snapshotMs: Math.max(2_000, optInt('SCADA_SNAPSHOT_MS', 5_000)),
-    historyMs: Math.max(15_000, optInt('SCADA_HISTORY_MS', 60_000)),
+    /* min 60 s: history ts se poravnava na minut (PK dedup), pa bi finiji
+       interval samo prepisivao isti bucket bez efekta (nalaz N8) */
+    historyMs: Math.max(60_000, optInt('SCADA_HISTORY_MS', 60_000)),
     cmdPollMs: Math.max(1_000, optInt('SCADA_CMD_POLL_MS', 2_000)),
     httpTimeoutMs: optInt('SCADA_HTTP_TIMEOUT_MS', 8_000),
     /* kill-switch: false trenutno zaustavlja IZVRŠAVANJE komandi (nadzor radi dalje) */

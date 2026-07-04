@@ -37,6 +37,19 @@ async function syncAlarms(supa, siteKey, activeAlarms) {
     .filter((a) => !existing.has(a.code))
     .map((a) => ({ site_key: siteKey, code: a.code, severity: a.severity, text: a.text }));
   const toClear = (dbRows || []).filter((r) => !wanted.has(r.code)).map((r) => r.id);
+  // postojeći alarm sa promenjenim tekstom/ozbiljnošću → osveži (nalaz N5;
+  // npr. INVERTER_OFFLINE nosi brojače u tekstu)
+  const toUpdate = activeAlarms
+    .map((a) => ({ a, db: existing.get(a.code) }))
+    .filter(({ a, db }) => db && (db.text !== a.text || db.severity !== a.severity));
+
+  for (const { a, db } of toUpdate) {
+    const { error: updErr } = await supa
+      .from('scada_alarms')
+      .update({ text: a.text, severity: a.severity })
+      .eq('id', db.id);
+    if (updErr) throw new Error(`[scada] alarms update ${siteKey}: ${updErr.message}`);
+  }
 
   if (toInsert.length) {
     const { error: insErr } = await supa.from('scada_alarms').insert(toInsert);
