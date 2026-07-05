@@ -3,8 +3,27 @@ import { config } from '../config.js';
 import { getSupabase } from '../db/supabase.js';
 import { logJob } from '../logger.js';
 import { validateCommand } from '../scada/allowlist.js';
+import { scadaSnapshotOnce } from './scadaSnapshot.js';
 
 const log = logJob('scada_commands');
+
+/* Posle primenjene komande UI treba ODMAH da vidi novu vrednost, a redovni
+   snapshot ide tek na SCADA_SNAPSHOT_MS (5 s). Zato okinemo vanredni snapshot
+   pass ~1.2 s posle primene (dovoljno da scada-app preko WS/poll-a preuzme
+   novo stanje uređaja). Coalesce: jedan zakazan refresh po naletu komandi. */
+let _refreshTimer = null;
+function scheduleImmediateRefresh() {
+  if (_refreshTimer) return;
+  _refreshTimer = setTimeout(async () => {
+    _refreshTimer = null;
+    try {
+      await scadaSnapshotOnce({ withHistory: false });
+      log.debug('vanredni snapshot posle komande');
+    } catch (err) {
+      log.warn({ err }, 'vanredni snapshot posle komande nije uspeo');
+    }
+  }, 1200);
+}
 
 /* Rate-limit po sistemu: max N IZVRŠENIH komandi u kliznom minutu.
    Preko limita → rejected (audit ostaje), da se spreči "mašinsko" slanje. */
@@ -96,5 +115,6 @@ export async function scadaCommandsOnce() {
       notifyError({ jobName: 'scada_commands', error: err, context: `${cmd.site_key}/${cmd.target}` });
     }
   }
+  if (applied > 0) scheduleImmediateRefresh();
   return { processed: claimed.length, applied };
 }
