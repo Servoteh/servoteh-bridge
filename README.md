@@ -511,3 +511,8 @@ Skripta: preflight ka 192.168.75.x → scada-app servis "Kotlarnica SCADA"
 (port 3000) → SCADA blok u bridge .env + smoke + restart bridge servisa.
 BigTehn sync jobovi ostaju NETAKNUTI. VAŽNO: scada-app sme da radi samo u
 JEDNOJ instanci (single-connection uređaji) — ugasi staru/laptop instancu.
+
+### Dokumentacija
+
+- **[docs/INSTALACIJA-VM.md](docs/INSTALACIJA-VM.md)** — zapis stvarnog stanja produkcione mašine (192.168.64.24): servisi, putanje, .env, mreža, procedura ažuriranja, poznate cake
+- **[docs/SCADA-RELAY.md](docs/SCADA-RELAY.md)** — SCADA deo: arhitektura, env varijable, tok komande (allowlist/kill-switch/audit), alarmi + push, dijagnostika, **prelazak na Ubuntu (systemd)**
