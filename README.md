@@ -495,3 +495,19 @@ izvršava `scada_commands` (allowlist + rate-limit + audit).
 - Per-mašina profil: `ENABLE_JOB_CATALOGS` / `ENABLE_JOB_PRODUCTION` (BigTehn server: true/true; SCADA VM: false/false + `SCADA_ENABLED=true`)
 - One-shot testovi: `npm run sync:scada`, `npm run sync:scada-commands`
 - Kompletno uputstvo: `docs/scada/bridge-scada-install.md` (repo root)
+
+### Opcija: SVE na bridge VM (192.168.64.24) — scada-app + relay
+
+Repo sada nosi i `scada-app/` (PLC drajveri + lokalni API, mirror iz
+plan-montaze). Na VM gde bridge već radi:
+
+```powershell
+git pull
+# jednom: kopiraj scada-app\.env sa masine gde je SCADA do sada radila (tajne!)
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-scada-vm.ps1
+```
+
+Skripta: preflight ka 192.168.75.x → scada-app servis "Kotlarnica SCADA"
+(port 3000) → SCADA blok u bridge .env + smoke + restart bridge servisa.
+BigTehn sync jobovi ostaju NETAKNUTI. VAŽNO: scada-app sme da radi samo u
+JEDNOJ instanci (single-connection uređaji) — ugasi staru/laptop instancu.
