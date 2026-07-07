@@ -51,8 +51,29 @@ Svaki run loguje u `bridge_sync_log` tabelu (i u composite `catalogs_daily` / `p
 - **Node.js 20 ili 22** (`node --version`)
 - Mrežni pristup do `Vasa-SQL:5765`
 - Mrežni pristup do `*.supabase.co` (HTTPS 443)
+- Za Katze job (evidencija prisustva): mrežni pristup do `192.168.64.10:1433`
 - **SQL Server čitalac** — preporuka: kreirati zaseban login `bridge_reader` sa SELECT pravima na (Faza 1B + B.1 + B.2.1 + B.2.2 + B.2.3 + F.1): `tRadneJedinice`, `tOperacije`, `Komitenti`, `tRadnici`, `tVrsteRadnika`, `tVrsteKvalitetaDelova`, `tPozicije`, `Predmeti`, `tRN`, `tStavkeRN`, `tLansiranRN`, `tSaglasanRN`, `tLokacijeDelova`, **`tTehPostupak`**.
 - Za servis instalaciju: **PowerShell pokrenut kao Administrator**
+
+### Uključivanje Katze joba (evidencija prisustva) na bridge mašini
+
+Job `syncKatze` čita prolaze iz Katze/CardWare SQL-a (`192.168.64.10`, baza
+**`Servoteh`** — živa; `KR7_Calc` je kopija za proračun, ne čitati iz nje) i
+upisuje u `attendance_events`. Inkrementalan po `IDReg`, na 10 min.
+
+1. U `.env` na bridge mašini dodaj (vrednosti prepiši iz `bridge/.env` na
+   razvojnoj mašini — nalog je `servosync_ro`, samo čitanje):
+   ```ini
+   ENABLE_JOB_KATZE=true
+   KATZE_SQL_SERVER=192.168.64.10
+   KATZE_SQL_PORT=1433
+   KATZE_SQL_DATABASE=Servoteh
+   KATZE_SQL_USER=servosync_ro
+   KATZE_SQL_PASSWORD=<iz bridge/.env na razvojnoj mašini>
+   ```
+2. Test: `npm run sync:katze` (one-shot; radi i bez restarta servisa).
+3. Restartuj bridge servis da scheduler registruje job (`*/10 * * * *`,
+   menja se preko `SCHEDULE_KATZE_CRON`).
 
 ### U Supabase-u (PRE prvog run-a Bridge servisa)
 
@@ -495,24 +516,3 @@ izvršava `scada_commands` (allowlist + rate-limit + audit).
 - Per-mašina profil: `ENABLE_JOB_CATALOGS` / `ENABLE_JOB_PRODUCTION` (BigTehn server: true/true; SCADA VM: false/false + `SCADA_ENABLED=true`)
 - One-shot testovi: `npm run sync:scada`, `npm run sync:scada-commands`
 - Kompletno uputstvo: `docs/scada/bridge-scada-install.md` (repo root)
-
-### Opcija: SVE na bridge VM (192.168.64.24) — scada-app + relay
-
-Repo sada nosi i `scada-app/` (PLC drajveri + lokalni API, mirror iz
-plan-montaze). Na VM gde bridge već radi:
-
-```powershell
-git pull
-# jednom: kopiraj scada-app\.env sa masine gde je SCADA do sada radila (tajne!)
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-scada-vm.ps1
-```
-
-Skripta: preflight ka 192.168.75.x → scada-app servis "Kotlarnica SCADA"
-(port 3000) → SCADA blok u bridge .env + smoke + restart bridge servisa.
-BigTehn sync jobovi ostaju NETAKNUTI. VAŽNO: scada-app sme da radi samo u
-JEDNOJ instanci (single-connection uređaji) — ugasi staru/laptop instancu.
-
-### Dokumentacija
-
-- **[docs/INSTALACIJA-VM.md](docs/INSTALACIJA-VM.md)** — zapis stvarnog stanja produkcione mašine (192.168.64.24): servisi, putanje, .env, mreža, procedura ažuriranja, poznate cake
-- **[docs/SCADA-RELAY.md](docs/SCADA-RELAY.md)** — SCADA deo: arhitektura, env varijable, tok komande (allowlist/kill-switch/audit), alarmi + push, dijagnostika, **prelazak na Ubuntu (systemd)**

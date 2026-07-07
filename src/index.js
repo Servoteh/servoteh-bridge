@@ -1,5 +1,7 @@
 import { describeConfig } from './config.js';
+import { closeKatzePool } from './db/katze.js';
 import { closeSqlPool } from './db/sqlserver.js';
+import { syncKatze } from './jobs/syncKatze.js';
 import { syncCatalogs } from './jobs/syncCatalogs.js';
 import { syncCustomers } from './jobs/syncCustomers.js';
 import { syncDepartments } from './jobs/syncDepartments.js';
@@ -100,6 +102,12 @@ async function runOne(jobName) {
     case 'production':
       await syncProduction();
       return;
+    case 'katze':
+    case 'katze_attendance':
+    case 'katze-attendance':
+    case 'attendance':
+      await syncKatze();
+      return;
     case 'scada':
     case 'scada_snapshot':
     case 'scada-snapshot':
@@ -132,10 +140,12 @@ async function main() {
       await runOne(args.job);
       logger.info('one-shot run complete, exiting');
       await closeSqlPool();
+      await closeKatzePool();
       process.exit(0);
     } catch (err) {
       logger.error({ err }, 'one-shot run failed');
       await closeSqlPool();
+      await closeKatzePool();
       process.exit(1);
     }
   }
@@ -146,11 +156,13 @@ async function main() {
   process.on('SIGINT', async () => {
     logger.info('SIGINT received, shutting down…');
     await closeSqlPool();
+    await closeKatzePool();
     process.exit(0);
   });
   process.on('SIGTERM', async () => {
     logger.info('SIGTERM received, shutting down…');
     await closeSqlPool();
+    await closeKatzePool();
     process.exit(0);
   });
 }
@@ -158,5 +170,6 @@ async function main() {
 main().catch(async (err) => {
   logger.fatal({ err }, 'bridge crashed in main');
   await closeSqlPool().catch(() => {});
+  await closeKatzePool().catch(() => {});
   process.exit(1);
 });

@@ -3,6 +3,7 @@ import cron from 'node-cron';
 import { config } from './config.js';
 import { syncBigtehnDrawings } from './jobs/syncBigtehnDrawings.js';
 import { syncCatalogs } from './jobs/syncCatalogs.js';
+import { syncKatze } from './jobs/syncKatze.js';
 import { syncProduction } from './jobs/syncProduction.js';
 import { logger } from './logger.js';
 import { startScadaLoops } from './scada/loop.js';
@@ -11,6 +12,7 @@ let _registered = false;
 let _runningCatalogs = false;
 let _runningProduction = false;
 let _runningDrawings = false;
+let _runningKatze = false;
 
 /**
  * Wraper koji sprečava preklapanje istog joba: ako je prethodni run još u toku
@@ -69,6 +71,25 @@ async function safeDrawings() {
   }
 }
 
+/**
+ * Katze prolazi wraper — na 10 min. Inkrementalan po IDReg pa je i posle
+ * dužeg prekida jedan run dovoljan da sve nadoknadi.
+ */
+async function safeKatze() {
+  if (_runningKatze) {
+    logger.warn('[scheduler] katze run still in progress, skipping this tick');
+    return;
+  }
+  _runningKatze = true;
+  try {
+    await syncKatze();
+  } catch (err) {
+    logger.error({ err }, '[scheduler] katze run threw (will retry next tick)');
+  } finally {
+    _runningKatze = false;
+  }
+}
+
 export function startScheduler() {
   if (_registered) {
     logger.warn('[scheduler] already started');
@@ -124,6 +145,22 @@ export function startScheduler() {
     );
   } else {
     logger.info('[scheduler] BIGTEHN_DRAWINGS_DIR nije postavljena — drawings job se preskače');
+  }
+
+  /* Katze evidencija radnog vremena (prolazi sa čitača) */
+  if (config.jobs.katze) {
+    if (!cron.validate(config.scheduler.katzeCron)) {
+      throw new Error(`[scheduler] Invalid katze cron expression: ${config.scheduler.katzeCron}`);
+    }
+    cron.schedule(config.scheduler.katzeCron, safeKatze, {
+      timezone: config.scheduler.timezone,
+    });
+    logger.info(
+      { cron: config.scheduler.katzeCron, tz: config.scheduler.timezone },
+      '[scheduler] katze job registered',
+    );
+  } else {
+    logger.info('[scheduler] katze job disabled via ENABLE_JOB_KATZE=false');
   }
 
   /* SCADA relay (Energetika) — sekundne petlje van cron-a, samo ako je uključen */

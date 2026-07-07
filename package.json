@@ -28,6 +28,7 @@
     "sync:tech-routing": "node src/index.js --job=tech_routing --once",
     "sync:drawings": "node src/index.js --job=bigtehn_drawings --once",
     "sync:production": "node src/index.js --job=production --once",
+    "sync:katze": "node src/index.js --job=katze --once",
     "sync:scada": "node src/index.js --job=scada --once",
     "sync:scada-commands": "node src/index.js --job=scada_commands --once",
     "backfill:production": "node scripts/backfill-production-cache.js --scope=open",
