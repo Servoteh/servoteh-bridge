@@ -10,17 +10,26 @@ const log = logJob('syncWorkers');
  *   tRadnici sadrži plaintext kolone Password i PasswordRadnika.
  *   Ovaj SELECT ih EKSPLICITNO NE čita. Nikada ne dodavati.
  */
+/* department_id: BigTehn NEMA FK integritet — radnik može da nosi šifru radne
+   jedinice koja ne postoji u tRadneJedinice (obarala je FK na
+   bigtehn_workers_cache svakodnevno od 30.06). LEFT JOIN → NULL za nepostojeće. */
 const SQL = `
   SELECT
-    SifraRadnika                          AS id,
-    LTRIM(RTRIM(ImeIPrezime))             AS full_name,
-    LTRIM(RTRIM(Radnik))                  AS short_name,
-    LTRIM(RTRIM(IDRadneJedinice))         AS department_id,
-    LTRIM(RTRIM(IDKartice))               AS card_id,
-    IDVrsteRadnika                        AS worker_type_id,
-    ISNULL(Aktivan, 0)                    AS is_active
-  FROM tRadnici
-  WHERE SifraRadnika IS NOT NULL;
+    r.SifraRadnika                        AS id,
+    LTRIM(RTRIM(r.ImeIPrezime))           AS full_name,
+    LTRIM(RTRIM(r.Radnik))                AS short_name,
+    CASE WHEN rj.IDRadneJedinice IS NULL THEN NULL
+         ELSE LTRIM(RTRIM(r.IDRadneJedinice)) END AS department_id,
+    CASE WHEN rj.IDRadneJedinice IS NULL
+          AND LTRIM(RTRIM(ISNULL(r.IDRadneJedinice, ''))) <> '' THEN 1
+         ELSE 0 END                       AS department_missing,
+    LTRIM(RTRIM(r.IDKartice))             AS card_id,
+    r.IDVrsteRadnika                      AS worker_type_id,
+    ISNULL(r.Aktivan, 0)                  AS is_active
+  FROM tRadnici r
+  LEFT JOIN tRadneJedinice rj
+    ON LTRIM(RTRIM(rj.IDRadneJedinice)) = LTRIM(RTRIM(r.IDRadneJedinice))
+  WHERE r.SifraRadnika IS NOT NULL;
 `;
 
 function mapRow(row) {
@@ -41,7 +50,11 @@ export async function syncWorkers() {
   log.info('start');
   try {
     const rows = await runQuery(SQL);
-    log.info({ count: rows.length, active: rows.filter((r) => r.is_active).length }, 'fetched');
+    const missingDept = rows.filter((r) => r.department_missing).length;
+    log.info({ count: rows.length, active: rows.filter((r) => r.is_active).length, missingDept }, 'fetched');
+    if (missingDept > 0) {
+      log.warn({ missingDept }, 'radnici sa nepostojećom radnom jedinicom u BigTehn (department_id → NULL)');
+    }
 
     const payload = rows.map(mapRow);
     const { total } = await upsertChunked('bigtehn_workers_cache', payload, 'id');
